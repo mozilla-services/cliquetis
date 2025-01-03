@@ -1,6 +1,5 @@
 /* eslint dot-notation: off */
-import sinon from "sinon";
-import { EventEmitter } from "events";
+import mitt from "mitt";
 import { SUPPORTED_PROTOCOL_VERSION as SPV } from "../src/http";
 
 import Collection from "../src/collection";
@@ -8,30 +7,18 @@ import BaseAdapter from "../src/adapters/base";
 import IDB from "../src/adapters/IDB";
 import Kinto from "../src";
 
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, beforeEach, afterEach } =
-  intern.getPlugin("interface.bdd");
-
 const TEST_BUCKET_NAME = "kinto-test";
 const TEST_COLLECTION_NAME = "kinto-test";
 
 /** @test {Kinto} */
 describe("Kinto", () => {
-  let sandbox: sinon.SinonSandbox;
-
   function testCollection() {
     const db = new Kinto({ bucket: TEST_BUCKET_NAME });
     return db.collection(TEST_COLLECTION_NAME);
   }
 
   beforeEach(() => {
-    sandbox = sinon.createSandbox();
     return testCollection().clear();
-  });
-
-  afterEach(() => {
-    sandbox.restore();
   });
 
   describe("static properties", () => {
@@ -41,11 +28,11 @@ describe("Kinto", () => {
       });
 
       it("should provide an adapters.BaseAdapter getter", () => {
-        expect(Kinto.adapters.BaseAdapter).to.eql(BaseAdapter);
+        expect(Kinto.adapters.BaseAdapter).toBe(BaseAdapter);
       });
 
       it("should provide an adapters.IDB getter", () => {
-        expect(Kinto.adapters.IDB).to.eql(IDB);
+        expect(Kinto.adapters.IDB).toBe(IDB);
       });
     });
 
@@ -59,8 +46,8 @@ describe("Kinto", () => {
   /** @test {Kinto#constructor} */
   describe("#constructor", () => {
     it("should expose a passed events instance", () => {
-      const events = new EventEmitter();
-      expect(new Kinto({ events }).events).to.eql(events);
+      const events = mitt();
+      expect(new Kinto({ events }).events).toBe(events);
     });
 
     it("should not create an events property if none passed", () => {
@@ -68,7 +55,7 @@ describe("Kinto", () => {
     });
 
     it("should propagate its events property to child dependencies", () => {
-      const events = new EventEmitter();
+      const events = mitt();
       const kinto = new Kinto({ events });
       expect(kinto.collection("x").events).eql(kinto.events);
       expect(kinto.collection("x").api.events).eql(kinto.events);

@@ -5,10 +5,7 @@ import {
   KintoBatchResponse,
 } from "../../src/http/batch";
 import { KintoRequest } from "../../src/types";
-
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, beforeEach } = intern.getPlugin("interface.bdd");
+import { beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
 describe("batch module", () => {
   describe("aggregate()", () => {
@@ -22,20 +19,20 @@ describe("batch module", () => {
       const req = requests.createRequest("foo1", {
         data: { id: 1 },
       });
-      expect(() => aggregate([resp], [req, req])).to.Throw(Error, /match/);
+      expect(() => aggregate([resp], [req, req])).toThrow(/match/);
     });
 
     it("should return an object", () => {
-      expect(aggregate([], [])).to.be.an("object");
+      expectTypeOf(aggregate([], [])).toBeObject();
     });
 
     it("should return an object with the expected keys", () => {
-      expect(aggregate([], [])).to.include.keys([
-        "published",
-        "conflicts",
-        "skipped",
-        "errors",
-      ]);
+      expect(aggregate([], [])).toMatchObject({
+        published: [],
+        conflicts: [],
+        skipped: [],
+        errors: [],
+      });
     });
 
     it("should expose HTTP 500 errors in the errors list", () => {
@@ -50,20 +47,18 @@ describe("batch module", () => {
         { status: 503, body: { data: { err: 2 } }, path: "/foo2", headers: {} },
       ];
 
-      expect(aggregate(responses, _requests))
-        .to.have.property("errors")
-        .eql([
-          {
-            error: { data: { err: 1 } },
-            path: "foo1",
-            sent: _requests[0],
-          },
-          {
-            error: { data: { err: 2 } },
-            path: "foo2",
-            sent: _requests[1],
-          },
-        ]);
+      expect(aggregate(responses, _requests)).toHaveProperty("errors", [
+        {
+          error: { data: { err: 1 } },
+          path: "foo1",
+          sent: _requests[0],
+        },
+        {
+          error: { data: { err: 2 } },
+          path: "foo2",
+          sent: _requests[1],
+        },
+      ]);
     });
 
     it("should expose HTTP 200<=x<400 responses in the published list", () => {
@@ -78,9 +73,10 @@ describe("batch module", () => {
         { status: 201, body: { data: { id: 2 } }, path: "/foo", headers: {} },
       ];
 
-      expect(aggregate(responses, _requests))
-        .to.have.property("published")
-        .eql(responses.map((r) => r.body));
+      expect(aggregate(responses, _requests)).toHaveProperty(
+        "published",
+        responses.map((r) => r.body)
+      );
     });
 
     it("should expose HTTP 404 responses in the skipped list", () => {
@@ -105,15 +101,14 @@ describe("batch module", () => {
         },
       ];
 
-      expect(aggregate(responses, _requests))
-        .to.have.property("skipped")
-        .eql(
-          responses.map((r) => ({
-            id: "123",
-            path: "records/123",
-            error: r.body,
-          }))
-        );
+      expect(aggregate(responses, _requests)).toHaveProperty(
+        "skipped",
+        responses.map((r) => ({
+          id: "123",
+          path: "records/123",
+          error: r.body,
+        }))
+      );
     });
 
     it("should expose HTTP 412 responses in the conflicts list", () => {
@@ -133,20 +128,18 @@ describe("batch module", () => {
         { status: 412, body: {}, path: "records/123", headers: {} },
       ];
 
-      expect(aggregate(responses, _requests))
-        .to.have.property("conflicts")
-        .eql([
-          {
-            type: "outgoing",
-            local: _requests[0].body,
-            remote: { last_modified: 0, id: "1" },
-          },
-          {
-            type: "outgoing",
-            local: _requests[1].body,
-            remote: null,
-          },
-        ]);
+      expect(aggregate(responses, _requests)).toHaveProperty("conflicts", [
+        {
+          type: "outgoing",
+          local: _requests[0].body,
+          remote: { last_modified: 0, id: "1" },
+        },
+        {
+          type: "outgoing",
+          local: _requests[1].body,
+          remote: null,
+        },
+      ]);
     });
 
     describe("Heterogeneous combinations", () => {

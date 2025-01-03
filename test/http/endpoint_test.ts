@@ -1,8 +1,5 @@
 import endpoints from "../../src/http/endpoints";
-
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it } = intern.getPlugin("interface.bdd");
+import { describe, expect, it } from "vitest";
 
 /** @test {endpoint} */
 describe("endpoint()", () => {

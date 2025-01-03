@@ -2,7 +2,7 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "module": "commonjs",
-    "types": ["intern"],
+    "types": ["vitest/globals", "@vitest/browser/providers/playwright"],
     "inlineSourceMap": true,
     "strictNullChecks": false
   },

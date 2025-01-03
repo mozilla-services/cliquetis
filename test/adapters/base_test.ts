@@ -1,9 +1,5 @@
 import BaseAdapter from "../../src/adapters/base";
 
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, beforeEach } = intern.getPlugin("interface.bdd");
-
 describe("adapters.BaseAdapter", () => {
   let adapter: BaseAdapter<any>;
   beforeEach(() => {

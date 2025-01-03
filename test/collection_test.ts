@@ -1,6 +1,5 @@
 /* eslint dot-notation: off */
-import sinon from "sinon";
-import { EventEmitter } from "events";
+import mitt, { Emitter } from "mitt";
 import { v4 as uuid4 } from "uuid";
 
 import IDB from "../src/adapters/IDB";
@@ -21,11 +20,7 @@ import {
 } from "./test_utils";
 import { createKeyValueStoreIdSchema } from "../src/collection";
 import KintoBase from "../src/KintoBase";
-
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, beforeEach, afterEach } =
-  intern.getPlugin("interface.bdd");
+import { Mock } from "vitest";
 
 const TEST_BUCKET_NAME = "kinto-test";
 const TEST_COLLECTION_NAME = "kinto-test";
@@ -51,12 +46,12 @@ describe("Collection", () => {
   ) {
     describe(label, () => {
       /*eslint-disable */
-      let sandbox: sinon.SinonSandbox, events: EventEmitter, api: Api;
+      let events: Emitter<any>, api: Api;
       /*eslint-enable */
       const article = { title: "foo", url: "http://foo" };
 
       function testCollection(options: any = {}) {
-        events = new EventEmitter();
+        events = mitt();
         const opts = { adapter, events, ...options };
         api = new Api(FAKE_SERVER_URL, { events });
         return new Collection(
@@ -99,13 +94,12 @@ describe("Collection", () => {
         };
       }
 
-      beforeEach(() => {
-        sandbox = sinon.createSandbox();
-        return testCollection().clear();
+      beforeEach(async () => {
+        await testCollection().clear();
       });
 
       afterEach(() => {
-        sandbox.restore();
+        vitest.restoreAllMocks();
       });
 
       describe("Helpers", () => {
@@ -135,7 +129,7 @@ describe("Collection", () => {
       /** @test {Collection#constructor} */
       describe("#constructor", () => {
         it("should expose a passed events instance", () => {
-          const events = new EventEmitter();
+          const events = mitt();
           const api = new Api(FAKE_SERVER_URL, { events });
           const collection = new Collection(
             TEST_BUCKET_NAME,
@@ -147,7 +141,7 @@ describe("Collection", () => {
         });
 
         it("should propagate its events property to child dependencies", () => {
-          const events = new EventEmitter();
+          const events = mitt();
           const api = new Api(FAKE_SERVER_URL, { events });
           const collection = new Collection(
             TEST_BUCKET_NAME,
@@ -177,7 +171,7 @@ describe("Collection", () => {
         });
 
         it("should use the default adapter if not any is provided", () => {
-          const events = new EventEmitter();
+          const events = mitt();
           const api = new Api(FAKE_SERVER_URL, { events });
           const hooks = {};
           const collection = new Collection(
@@ -190,7 +184,7 @@ describe("Collection", () => {
         });
 
         it("should throw incompatible adapter options", () => {
-          const events = new EventEmitter();
+          const events = mitt();
           const api = new Api(FAKE_SERVER_URL, { events });
           expect(() => {
             new Collection(
@@ -510,9 +504,9 @@ describe("Collection", () => {
       describe("#clear", () => {
         let articles: Collection;
 
-        beforeEach(() => {
+        beforeEach(async () => {
           articles = testCollection();
-          return Promise.all([
+          await Promise.all([
             articles.create({ title: "foo" }),
             articles.create({ title: "bar" }),
             articles.db.saveMetadata({ id: "articles", last_modified: 42 }),
@@ -522,7 +516,7 @@ describe("Collection", () => {
         it("should clear collection records", async () => {
           await articles.clear();
           const { data } = await articles.list();
-          data.should.have.lengthOf(0);
+          expect(data).toHaveLength(0);
         });
 
         it("should clear collection timestamp", async () => {
@@ -549,19 +543,19 @@ describe("Collection", () => {
 
         it("should create a record and return created record data", async () => {
           const res = await articles.create(article);
-          res.should.have.property("data");
+          expect(res).toHaveProperty("data");
         });
 
         it("should create a record and return created record perms", async () => {
           const res = await articles.create(article);
-          res.should.have.property("permissions");
+          expect(res).toHaveProperty("permissions");
         });
 
         it("should assign an id to the created record", async () => {
           const {
             data: { id },
           } = await articles.create(article);
-          id.should.be.a("string");
+          expect(id).toBeTypeOf("string");
         });
 
         it("should assign an id to the created record (custom IdSchema)", async () => {
@@ -570,7 +564,7 @@ describe("Collection", () => {
           const {
             data: { id },
           } = await articles.create(article);
-          id.should.be.a("number");
+          expect(id).toBeTypeOf("number");
         });
 
         it("should accept a record for the 'generate' function", async () => {
@@ -579,7 +573,7 @@ describe("Collection", () => {
           const {
             data: { id },
           } = await articles.create(article);
-          id.should.equal("title,url");
+          expect(id).equal("title,url");
         });
 
         it("should reject when useRecordId is true and record is missing an id", async () => {
@@ -609,12 +603,12 @@ describe("Collection", () => {
 
         it("should not alter original record", async () => {
           const res = await articles.create(article);
-          res.should.not.deep.equal(article);
+          expect(res).not.toStrictEqual(article);
         });
 
         it("should add record status on creation", async () => {
           const res = await articles.create(article);
-          res.data._status.should.equal("created");
+          expect(res.data).toHaveProperty("_status", "created");
         });
 
         it("should reject if passed argument is not an object", async () => {
@@ -627,7 +621,7 @@ describe("Collection", () => {
         it("should actually persist the record into the collection", async () => {
           const result = await articles.create(article);
           const res = await articles.get(result.data.id);
-          res.data.title.should.equal(article.title);
+          expect(res.data).toHaveProperty("title", article.title);
         });
 
         it("should support the useRecordId option", async () => {
@@ -637,7 +631,7 @@ describe("Collection", () => {
             { useRecordId: true }
           );
           const res = await articles.get(result.data.id);
-          res.data.id.should.equal(testId);
+          expect(res.data).toHaveProperty("id", testId);
         });
 
         it("should validate record's Id when provided", async () => {
@@ -665,9 +659,9 @@ describe("Collection", () => {
         });
 
         it("should reject with any encountered transaction error", async () => {
-          sandbox
-            .stub(articles.db, "execute")
-            .returns(Promise.reject(new Error("transaction error")));
+          vitest
+            .spyOn(articles.db, "execute")
+            .mockReturnValue(Promise.reject(new Error("transaction error")));
 
           await expectAsyncError(
             () => articles.create({ title: "foo" }),
@@ -707,7 +701,7 @@ describe("Collection", () => {
           );
 
           const res = await articles.getAny(result.data.id);
-          res.data.id.should.equal(article.title);
+          expect(res.data).toHaveProperty("id", article.title);
         });
       });
 
@@ -727,7 +721,7 @@ describe("Collection", () => {
             title: "new title",
           });
           const res_2 = await articles.get(res_1.data.id);
-          res_2.data.title.should.equal("new title");
+          expect(res_2.data).toHaveProperty("title", "new title");
         });
 
         it("should return the old data for the record", async () => {
@@ -737,7 +731,7 @@ describe("Collection", () => {
             ...existing,
             title: "new title",
           });
-          updateRes.oldRecord.title.should.equal("foo");
+          expect(updateRes.oldRecord).toHaveProperty("title", "foo");
         });
 
         it("should update record status on update", async () => {
@@ -748,7 +742,7 @@ describe("Collection", () => {
           const {
             data: { _status },
           } = await articles.update({ ...data, title: "blah" });
-          _status.should.equal("updated");
+          expect(_status).equal("updated");
         });
 
         it("should not update record status if only local fields are changed", async () => {
@@ -759,7 +753,7 @@ describe("Collection", () => {
           const {
             data: { _status },
           } = await articles.update({ ...data, read: true });
-          _status.should.equal("synced");
+          expect(_status).equal("synced");
         });
 
         it("should reject updates on a non-existent record", async () => {
@@ -807,7 +801,7 @@ describe("Collection", () => {
             id: result.data.id,
             title: "foo",
           });
-          res.data.title.should.equal("foo");
+          expect(res.data).toHaveProperty("title", "foo");
         });
 
         it("should patch existing record when patch option is used", async () => {
@@ -817,7 +811,7 @@ describe("Collection", () => {
             { useRecordId: true, synced: true }
           );
           const res = await articles.update({ id, rank: 99 }, { patch: true });
-          res.data.should.deep.equal({
+          expect(res.data).toStrictEqual({
             id,
             title: "foo",
             rank: 99,
@@ -831,7 +825,7 @@ describe("Collection", () => {
             data: { id },
           } = await articles.create(article);
           const { data } = await articles.update({ id, title: "new title" });
-          expect(data).not.to.have.property("url");
+          expect(data).not.toHaveProperty("url");
         });
 
         it("should preserve record.last_modified", async () => {
@@ -843,7 +837,7 @@ describe("Collection", () => {
             last_modified: 123456789012,
           });
           const { data } = await articles.update({ id, title: "new title" });
-          data.should.have.property("last_modified").equal(123456789012);
+          expect(data).toHaveProperty("last_modified", 123456789012);
         });
 
         it("should optionally mark a record as synced", async () => {
@@ -852,7 +846,7 @@ describe("Collection", () => {
             { ...data, title: "bar" },
             { synced: true }
           );
-          updateData.should.have.property("_status").equal("synced");
+          expect(updateData).toHaveProperty("_status", "synced");
         });
 
         it("should preserve created status if record was never synced", async () => {
@@ -861,7 +855,7 @@ describe("Collection", () => {
             ...data,
             title: "bar",
           });
-          updateData.should.have.property("_status").equal("created");
+          expect(updateData).toHaveProperty("_status", "created");
         });
       });
 
@@ -882,20 +876,20 @@ describe("Collection", () => {
           const {
             data: { title },
           } = await articles.get(id);
-          title.should.equal("new title");
+          expect(title).equal("new title");
         });
 
         it("should change record status to updated", async () => {
           const res = await articles.create({ id: uuid4() }, { synced: true });
           const data = res.data;
           const res_1 = await articles.upsert({ ...data, title: "blah" });
-          res_1.data._status.should.equal("updated");
+          expect(res_1.data).toHaveProperty("_status", "updated");
         });
 
         it("should preserve created status if record was never synced", async () => {
           const res = await articles.create({ title: "foo" });
           const res_1 = await articles.upsert({ ...res.data, title: "bar" });
-          res_1.data.should.have.property("_status").equal("created");
+          expect(res_1.data).toHaveProperty("_status", "created");
         });
 
         it("should create a new record if non-existent", async () => {
@@ -903,12 +897,12 @@ describe("Collection", () => {
             id: uuid4(),
             title: "new title",
           });
-          res.data.title.should.equal("new title");
+          expect(res.data).toHaveProperty("title", "new title");
         });
 
         it("should set status to created if it created a record", async () => {
           const res = await articles.upsert({ id: uuid4() });
-          res.data._status.should.equal("created");
+          expect(res.data).toHaveProperty("_status", "created");
         });
 
         it("should reject updates on a non-object record", async () => {
@@ -940,7 +934,7 @@ describe("Collection", () => {
             ...res_2.data,
             title: "new title",
           });
-          res_3.data.title.should.equal("new title");
+          expect(res_3.data).toHaveProperty("title", "new title");
         });
 
         it("should set status of deleted records to updated", async () => {
@@ -951,7 +945,7 @@ describe("Collection", () => {
             ...res_2.data,
             title: "new title",
           });
-          res_3.data._status.should.equal("updated");
+          expect(res_3.data).toHaveProperty("_status", "updated");
         });
 
         it("should validate record's id when provided (custom IdSchema)", async () => {
@@ -970,7 +964,7 @@ describe("Collection", () => {
             id: res_1.data.id,
             title: "new title",
           });
-          res_2.data.should.not.have.property("url");
+          expect(res_2.data).not.toHaveProperty("url");
         });
 
         it("should preserve record.last_modified", async () => {
@@ -984,7 +978,7 @@ describe("Collection", () => {
             id: res_1.data.id,
             title: "new title",
           });
-          res_2.data.should.have.property("last_modified").equal(123456789012);
+          expect(res_2.data).toHaveProperty("last_modified", 123456789012);
         });
 
         it("should return the old data for the record", async () => {
@@ -995,7 +989,7 @@ describe("Collection", () => {
             ...existing,
             title: "new title",
           });
-          res_2.oldRecord.title.should.equal("foo");
+          expect(res_2.oldRecord).toHaveProperty("title", "foo");
         });
 
         it("should not return the old data for a deleted record", async () => {
@@ -1065,7 +1059,7 @@ describe("Collection", () => {
         it("should mark a record as updated", async () => {
           const resolution = { ...local, title: "resolved" };
           const res = await articles.resolve(conflict, resolution);
-          res.data.should.deep.equal({
+          expect(res.data).toStrictEqual({
             _status: "updated",
             id: local.id,
             title: resolution.title,
@@ -1076,7 +1070,7 @@ describe("Collection", () => {
         it("should mark a record as synced if resolved with remote", async () => {
           const resolution = { ...local, title: remote.title };
           const res = await articles.resolve(conflict, resolution);
-          res.data.should.deep.equal({
+          expect(res.data).toStrictEqual({
             _status: "synced",
             id: local.id,
             title: resolution.title,
@@ -1105,7 +1099,7 @@ describe("Collection", () => {
 
         it("should retrieve a record from its id", async () => {
           const res = await articles.get(id);
-          res.data.title.should.equal(article.title);
+          expect(res.data).toHaveProperty("title", article.title);
         });
 
         it("should retrieve a record from its id (custom IdSchema)", async () => {
@@ -1115,7 +1109,7 @@ describe("Collection", () => {
           await articles.clear();
           const result_1 = await articles.create(article);
           const res = await articles.get(result_1.data.id);
-          res.data.title.should.equal(article.title);
+          expect(res.data).toHaveProperty("title", article.title);
         });
 
         it("should validate passed id", async () => {
@@ -1128,7 +1122,7 @@ describe("Collection", () => {
 
         it("should have record status info attached", async () => {
           const res = await articles.get(id);
-          res.data._status.should.equal("created");
+          expect(res.data).toHaveProperty("_status", "created");
         });
 
         it("should reject in case of record not found", async () => {
@@ -1143,7 +1137,7 @@ describe("Collection", () => {
         it("should retrieve deleted record with includeDeleted", async () => {
           await articles.delete(id);
           const res_1 = await articles.get(id, { includeDeleted: true });
-          res_1.data.should.deep.equal({
+          expect(res_1.data).toStrictEqual({
             _status: "deleted",
             id,
             title: "foo",
@@ -1164,7 +1158,7 @@ describe("Collection", () => {
 
         it("should retrieve a record from its id", async () => {
           const res = await articles.getAny(id);
-          res.data!.title.should.equal(article.title);
+          expect(res.data).toHaveProperty("title", article.title);
         });
 
         it("should resolve to undefined if not present", async () => {
@@ -1175,7 +1169,7 @@ describe("Collection", () => {
         it("should resolve to virtually deleted record", async () => {
           await articles.delete(id);
           const res_1 = await articles.getAny(id);
-          res_1.data.should.deep.equal({
+          expect(res_1.data).toStrictEqual({
             _status: "deleted",
             id,
             title: "foo",
@@ -1214,7 +1208,7 @@ describe("Collection", () => {
             const res_1 = await articles.get(res.data.id, {
               includeDeleted: true,
             });
-            res_1.data._status.should.equal("deleted");
+            expect(res_1.data).toHaveProperty("_status", "deleted");
           });
 
           it("should reject on non-existent record", async () => {
@@ -1234,7 +1228,7 @@ describe("Collection", () => {
 
           it("should return deleted record", async () => {
             const res = await articles.delete(id, { virtual: true });
-            res.data.should.have.property("title").equal("foo");
+            expect(res.data).toHaveProperty("title", "foo");
           });
         });
 
@@ -1249,7 +1243,7 @@ describe("Collection", () => {
 
           it("should resolve with deletion information", async () => {
             const res = await articles.delete(id, { virtual: false });
-            res.data.should.have.property("id").equal(id);
+            expect(res.data).toHaveProperty("id", id);
           });
 
           it("should reject on non-existent record", async () => {
@@ -1262,12 +1256,12 @@ describe("Collection", () => {
           it("should delete if already virtually deleted", async () => {
             await articles.delete(id);
             const res = await articles.delete(id, { virtual: false });
-            res.data.should.have.property("id").equal(id);
+            expect(res.data).toHaveProperty("id", id);
           });
 
           it("should return deleted record", async () => {
             const res = await articles.delete(id, { virtual: false });
-            res.data.should.have.property("title").equal("foo");
+            expect(res.data).toHaveProperty("title", "foo");
           });
         });
       });
@@ -1289,16 +1283,16 @@ describe("Collection", () => {
         it("should be able to soft delete all articles", async () => {
           await articles.deleteAll();
           const res = await articles.list();
-          res.data.should.have.lengthOf(0);
+          expect(res.data).toHaveLength(0);
 
           const res_1 = await articles.list({}, { includeDeleted: true });
-          res_1.data.should.have.lengthOf(5);
+          expect(res_1.data).toHaveLength(5);
         });
 
         it("should not delete anything when there are no records", async () => {
           await articles.clear();
           const res_1 = await articles.deleteAll();
-          res_1.data.should.have.lengthOf(0);
+          expect(res_1.data).toHaveLength(0);
         });
       });
 
@@ -1315,29 +1309,29 @@ describe("Collection", () => {
         it("should delete an existing record", async () => {
           const res = await articles.deleteAny(id);
           const res_1 = await articles.getAny(res.data.id);
-          res_1.data!._status.should.equal("deleted");
+          expect(res_1.data).toHaveProperty("_status", "deleted");
         });
 
         it("should resolve on non-existant record", async () => {
           const id = uuid4();
           const res = await articles.deleteAny(id);
-          res.data.id.should.equal(id);
+          expect(res.data).toHaveProperty("id", id);
         });
 
         it("should indicate that it deleted", async () => {
           const res = await articles.deleteAny(id);
-          res.deleted.should.equal(true);
+          expect(res.deleted).toBeTruthy();
         });
 
         it("should indicate that it didn't delete when record is gone", async () => {
           const id = uuid4();
           const res = await articles.deleteAny(id);
-          res.deleted.should.equal(false);
+          expect(res.deleted).toBeFalsy();
         });
 
         it("should return deleted record", async () => {
           const res = await articles.deleteAny(id);
-          res.data.should.have.property("title").equal("foo");
+          expect(res.data).toHaveProperty("title", "foo");
         });
       });
 
@@ -1346,9 +1340,9 @@ describe("Collection", () => {
         let articles: Collection;
 
         describe("Basic", () => {
-          beforeEach(() => {
+          beforeEach(async () => {
             articles = testCollection();
-            return Promise.all([
+            await Promise.all([
               articles.create(article),
               articles.create({ title: "bar", url: "http://bar" }),
             ]);
@@ -1356,21 +1350,21 @@ describe("Collection", () => {
 
           it("should retrieve the list of records", async () => {
             const res = await articles.list();
-            res.data.should.have.lengthOf(2);
+            expect(res.data).toHaveLength(2);
           });
 
           it("shouldn't list virtually deleted records", async () => {
             const res = await articles.create({ title: "yay" });
             await articles.delete(res.data.id);
             const res_1 = await articles.list();
-            res_1.data.should.have.lengthOf(2);
+            expect(res_1.data).toHaveLength(2);
           });
 
           it("should support the includeDeleted option", async () => {
             const res = await articles.create({ title: "yay" });
             await articles.delete(res.data.id);
             const res_1 = await articles.list({}, { includeDeleted: true });
-            res_1.data.should.have.lengthOf(3);
+            expect(res_1.data).toHaveLength(3);
           });
         });
 
@@ -1381,44 +1375,54 @@ describe("Collection", () => {
             { title: "art3", last_modified: 1, unread: false },
           ];
 
-          beforeEach(() => {
+          beforeEach(async () => {
             articles = testCollection();
-            return Promise.all(fixtures.map((r) => articles.create(r)));
+            await Promise.all(fixtures.map((r) => articles.create(r)));
           });
 
           it("should order records on last_modified DESC by default", async () => {
             const res = await articles.list();
-            res.data
-              .map((r) => r.title)
-              .should.deep.equal(["art2", "art1", "art3"]);
+            expect(res.data.map((r) => r.title)).toStrictEqual([
+              "art2",
+              "art1",
+              "art3",
+            ]);
           });
 
           it("should order records on custom field ASC", async () => {
             const res = await articles.list({ order: "title" });
-            res.data
-              .map((r) => r.title)
-              .should.deep.equal(["art1", "art2", "art3"]);
+            expect(res.data.map((r) => r.title)).toStrictEqual([
+              "art1",
+              "art2",
+              "art3",
+            ]);
           });
 
           it("should order records on custom field DESC", async () => {
             const res = await articles.list({ order: "-title" });
-            res.data
-              .map((r) => r.title)
-              .should.deep.equal(["art3", "art2", "art1"]);
+            expect(res.data.map((r) => r.title)).toStrictEqual([
+              "art3",
+              "art2",
+              "art1",
+            ]);
           });
 
           it("should order records on boolean values ASC", async () => {
             const res = await articles.list({ order: "unread" });
-            res.data
-              .map((r) => r.unread)
-              .should.deep.equal([false, false, true]);
+            expect(res.data.map((r) => r.unread)).toStrictEqual([
+              false,
+              false,
+              true,
+            ]);
           });
 
           it("should order records on boolean values DESC", async () => {
             const res = await articles.list({ order: "-unread" });
-            res.data
-              .map((r) => r.unread)
-              .should.deep.equal([true, false, false]);
+            expect(res.data.map((r) => r.unread)).toStrictEqual([
+              true,
+              false,
+              false,
+            ]);
           });
         });
 
@@ -1435,9 +1439,9 @@ describe("Collection", () => {
             },
           ];
 
-          beforeEach(() => {
+          beforeEach(async () => {
             articles = testCollection();
-            return Promise.all([
+            await Promise.all([
               articles.create(fixtures[0]),
               articles.create(fixtures[1]),
               articles.create(fixtures[2], { synced: true }),
@@ -1448,24 +1452,30 @@ describe("Collection", () => {
             const res = await articles.list({
               filters: { _status: "created" },
             });
-            res.data.map((r) => r.title).should.deep.equal(["art1", "art2"]);
+            expect(res.data.map((r) => r.title)).toStrictEqual([
+              "art1",
+              "art2",
+            ]);
           });
 
           it("should filter records on existing field", async () => {
             const res = await articles.list({ filters: { unread: true } });
-            res.data.map((r) => r.title).should.deep.equal(["art1", "art3"]);
+            expect(res.data.map((r) => r.title)).toStrictEqual([
+              "art1",
+              "art3",
+            ]);
           });
 
           it("should filter records on missing field", async () => {
             const res = await articles.list({ filters: { missing: true } });
-            res.data.map((r) => r.title).should.deep.equal([]);
+            expect(res.data.map((r) => r.title)).toStrictEqual([]);
           });
 
           it("should filter records on multiple fields using 'and'", async () => {
             const res = await articles.list({
               filters: { unread: true, complete: true },
             });
-            res.data.map((r) => r.title).should.deep.equal(["art1"]);
+            expect(res.data.map((r) => r.title)).toStrictEqual(["art1"]);
           });
         });
 
@@ -1512,9 +1522,9 @@ describe("Collection", () => {
             },
           ];
 
-          beforeEach(() => {
+          beforeEach(async () => {
             articles = testCollection();
-            return Promise.all(fixtures.map((r) => articles.create(r)));
+            await Promise.all(fixtures.map((r) => articles.create(r)));
           });
 
           it("Filters nested objects", async () => {
@@ -1524,11 +1534,11 @@ describe("Collection", () => {
                 "author.otherBook.title": "book3",
               },
             });
-            res.data
-              .map((r) => {
+            expect(
+              res.data.map((r) => {
                 return r.title;
               })
-              .should.deep.equal(["art3"]);
+            ).toStrictEqual(["art3"]);
           });
 
           it("should return empty array if missing subObject field", async () => {
@@ -1538,7 +1548,7 @@ describe("Collection", () => {
                 "author.unknownField": "blahblahblah",
               },
             });
-            res.data.should.deep.equal([]);
+            expect(res.data).toStrictEqual([]);
           });
         });
 
@@ -1549,9 +1559,9 @@ describe("Collection", () => {
             { title: "art3", last_modified: 1, unread: true, complete: true },
           ];
 
-          beforeEach(() => {
+          beforeEach(async () => {
             articles = testCollection();
-            return Promise.all(fixtures.map((r) => articles.create(r)));
+            await Promise.all(fixtures.map((r) => articles.create(r)));
           });
 
           it("should order and filter records", async () => {
@@ -1559,18 +1569,18 @@ describe("Collection", () => {
               order: "-title",
               filters: { unread: true, complete: true },
             });
-            res.data
-              .map((r: any) => {
+            expect(
+              res.data.map((r: any) => {
                 return {
                   title: r.title,
                   unread: r.unread,
                   complete: r.complete,
                 };
               })
-              .should.deep.equal([
-                { title: "art3", unread: true, complete: true },
-                { title: "art1", unread: true, complete: true },
-              ]);
+            ).toStrictEqual([
+              { title: "art3", unread: true, complete: true },
+              { title: "art1", unread: true, complete: true },
+            ]);
           });
         });
       });
@@ -1582,17 +1592,16 @@ describe("Collection", () => {
       describe("Deprecated #loadDump", () => {
         let articles: Collection;
 
-        it("should call importBulk", () => {
+        it("should call importBulk", async () => {
           articles = testCollection();
-          const importBulkStub = sandbox
-            .stub(articles, "importBulk")
-            .returns(Promise.resolve([]));
-          articles
-            .loadDump([
-              { id: uuid4(), title: "foo", last_modified: 1452347896 },
-              { id: uuid4(), title: "bar", last_modified: 1452347985 },
-            ])
-            .then(() => sinon.assert.calledOnce(importBulkStub));
+          const importBulkStub = vitest
+            .spyOn(articles, "importBulk")
+            .mockReturnValue(Promise.resolve([]));
+          await articles.loadDump([
+            { id: uuid4(), title: "foo", last_modified: 1452347896 },
+            { id: uuid4(), title: "bar", last_modified: 1452347985 },
+          ]);
+          expect(importBulkStub).toHaveBeenCalledOnce();
         });
       });
 
@@ -1609,7 +1618,7 @@ describe("Collection", () => {
             { id: uuid4(), title: "foo", last_modified: 1452347896 },
             { id: uuid4(), title: "bar", last_modified: 1452347985 },
           ]);
-          res.should.have.lengthOf(2);
+          expect(res).toHaveLength(2);
         });
 
         it("should fail if records is not an array", async () => {
@@ -1649,7 +1658,7 @@ describe("Collection", () => {
             { id: testId, title: "foo", last_modified: 1457896541 },
           ]);
           const res = await articles.get(testId);
-          res.data._status.should.equal("synced");
+          expect(res.data).toHaveProperty("_status", "synced");
         });
 
         it("should ignore already imported records.", async () => {
@@ -1660,7 +1669,7 @@ describe("Collection", () => {
           };
           await articles.importBulk([record]);
           const res = await articles.importBulk([record]);
-          res.should.have.lengthOf(0);
+          expect(res).toHaveLength(0);
         });
 
         it("should overwrite old records.", async () => {
@@ -1672,7 +1681,7 @@ describe("Collection", () => {
           await articles.importBulk([record]);
           const updated = { ...record, last_modified: 1457896543 };
           const res = await articles.importBulk([updated]);
-          res.should.have.lengthOf(1);
+          expect(res).toHaveLength(1);
         });
 
         it("should not overwrite unsynced records.", async () => {
@@ -1683,7 +1692,7 @@ describe("Collection", () => {
             last_modified: 1457896541,
           };
           const res = await articles.importBulk([record]);
-          res.should.have.lengthOf(0);
+          expect(res).toHaveLength(0);
         });
 
         it("should not overwrite records without last modified.", async () => {
@@ -1697,7 +1706,7 @@ describe("Collection", () => {
             last_modified: 1457896541,
           };
           const res = await articles.importBulk([record]);
-          res.should.have.lengthOf(0);
+          expect(res).toHaveLength(0);
         });
       });
 
@@ -1720,10 +1729,10 @@ describe("Collection", () => {
             ]);
 
             const res = await articles.gatherLocalChanges();
-            res
-              .map((r) => (r as any).title)
-              .sort()
-              .should.deep.equal(["abcdef?!", "ghijkl?!"]);
+            expect(res.map((r) => (r as any).title).sort()).toStrictEqual([
+              "abcdef?!",
+              "ghijkl?!",
+            ]);
           });
 
           it("should encode even deleted records", async () => {
@@ -1758,7 +1767,7 @@ describe("Collection", () => {
       describe("#pullChanges", () => {
         let client: KintoClientCollection,
           articles: Collection,
-          listRecords: sinon.SinonStub,
+          listRecords: Mock,
           result: SyncResultObject;
 
         beforeEach(() => {
@@ -1796,9 +1805,9 @@ describe("Collection", () => {
           ];
 
           beforeEach(async () => {
-            listRecords = sandbox
-              .stub(KintoClientCollection.prototype, "listRecords")
-              .returns(
+            listRecords = vitest
+              .spyOn(KintoClientCollection.prototype, "listRecords")
+              .mockReturnValue(
                 Promise.resolve({
                   data: serverChanges,
                   next: (() => {}) as any,
@@ -1822,13 +1831,13 @@ describe("Collection", () => {
             const withConflicts = new SyncResultObject();
             withConflicts.add("conflicts", [1 as any]);
             await articles.pullChanges(client, withConflicts);
-            return sinon.assert.notCalled(listRecords);
+            expect(listRecords).not.toHaveBeenCalled();
           });
 
           it("should fetch remote changes from the server", async () => {
             await articles.pullChanges(client, result);
-            sinon.assert.calledOnce(listRecords);
-            sinon.assert.calledWithExactly(listRecords, {
+            expect(listRecords).toHaveBeenCalledOnce();
+            expect(listRecords).toHaveBeenCalledWith({
               since: undefined,
               filters: undefined,
               retry: undefined,
@@ -1839,8 +1848,8 @@ describe("Collection", () => {
 
           it("should use timestamp to fetch remote changes from the server", async () => {
             await articles.pullChanges(client, result, { lastModified: 42 });
-            sinon.assert.calledOnce(listRecords);
-            sinon.assert.calledWithExactly(listRecords, {
+            expect(listRecords).toHaveBeenCalledOnce();
+            expect(listRecords).toHaveBeenCalledWith({
               since: "42",
               filters: undefined,
               retry: undefined,
@@ -1855,8 +1864,8 @@ describe("Collection", () => {
               lastModified: 42,
               exclude,
             });
-            sinon.assert.calledOnce(listRecords);
-            sinon.assert.calledWithExactly(listRecords, {
+            expect(listRecords).toHaveBeenCalledOnce();
+            expect(listRecords).toHaveBeenCalledWith({
               since: "42",
               filters: { exclude_id: "1,2,3" },
               retry: undefined,
@@ -1869,8 +1878,8 @@ describe("Collection", () => {
             await articles.pullChanges(client, result, {
               expectedTimestamp: '"123"',
             });
-            sinon.assert.calledOnce(listRecords);
-            sinon.assert.calledWithExactly(listRecords, {
+            expect(listRecords).toHaveBeenCalledOnce();
+            expect(listRecords).toHaveBeenCalledWith({
               since: undefined,
               filters: { _expected: '"123"' },
               retry: undefined,
@@ -1881,7 +1890,7 @@ describe("Collection", () => {
 
           it("should resolve with imported creations", async () => {
             const res = await articles.pullChanges(client, result);
-            res.created.should.deep.equal([
+            expect(res.created).toStrictEqual([
               {
                 id: id_3,
                 title: "art3",
@@ -1899,7 +1908,7 @@ describe("Collection", () => {
 
           it("should resolve with imported updates", async () => {
             const res = await articles.pullChanges(client, result);
-            res.updated.should.deep.equal([
+            expect(res.updated).toStrictEqual([
               {
                 new: {
                   id: id_7,
@@ -1918,20 +1927,20 @@ describe("Collection", () => {
 
           it("should resolve with imported deletions", async () => {
             const res = await articles.pullChanges(client, result);
-            res.deleted.should.deep.equal([
+            expect(res.deleted).toStrictEqual([
               { id: id_4, title: "art4", _status: "synced" },
             ]);
           });
 
           it("should resolve with no conflicts detected", async () => {
             const res = await articles.pullChanges(client, result);
-            res.conflicts.should.deep.equal([]);
+            expect(res.conflicts).toStrictEqual([]);
           });
 
           it("should actually import changes into the collection", async () => {
             await articles.pullChanges(client, result);
             const res = await articles.list({ order: "title" });
-            res.data.should.deep.equal([
+            expect(res.data).toStrictEqual([
               { id: id_1, title: "art1", _status: "synced" },
               { id: id_2, title: "art2", last_modified: 0, _status: "synced" },
               { id: id_3, title: "art3", last_modified: 0, _status: "synced" },
@@ -1956,7 +1965,7 @@ describe("Collection", () => {
 
           it("should not list identical records as skipped", async () => {
             const res = await articles.pullChanges(client, result);
-            res.skipped.should.not.contain({
+            expect(res.skipped).not.contain({
               id: id_2,
               title: "art2",
               _status: "synced",
@@ -1978,7 +1987,7 @@ describe("Collection", () => {
               });
 
               await articles.pullChanges(client, result);
-              expect(hookCalled).to.equal(true);
+              expect(hookCalled).toBeTruthy();
             });
 
             it("should reject the promise if the hook throws", async () => {
@@ -2128,7 +2137,7 @@ describe("Collection", () => {
             }
 
             beforeEach(() => {
-              listRecords.returns(
+              listRecords.mockReturnValue(
                 Promise.resolve({
                   data: [{ id: uuid4(), title: "bar" }],
                   next: () => {},
@@ -2143,7 +2152,7 @@ describe("Collection", () => {
               });
 
               const res = await articles.pullChanges(client, result);
-              res.created[0].title.should.equal("bar#");
+              expect(res.created[0]).toHaveProperty("title", "bar#");
             });
 
             it("should decode incoming encoded records using multiple transformers", async () => {
@@ -2155,7 +2164,7 @@ describe("Collection", () => {
               });
 
               const res = await articles.pullChanges(client, result);
-              res.created[0].title.should.equal("bar?!"); // reversed because we decode in the opposite order
+              expect(res.created[0]).toHaveProperty("title", "bar?!"); // reversed because we decode in the opposite order
             });
 
             it("should decode incoming records even when deleted", async () => {
@@ -2172,7 +2181,7 @@ describe("Collection", () => {
                 remoteTransformers: [transformer],
               });
               const id = uuid4();
-              listRecords.returns(
+              listRecords.mockReturnValue(
                 Promise.resolve({
                   data: [{ id, deleted: true }],
                   next: () => {},
@@ -2185,7 +2194,7 @@ describe("Collection", () => {
               );
               const res = await articles.pullChanges(client, result);
               expect(transformer.called).equal(true);
-              res.deleted[0].should.have.property("id").equal("local-" + id);
+              expect(res.deleted[0]).toHaveProperty("id", "local-" + id);
             });
           });
 
@@ -2194,10 +2203,10 @@ describe("Collection", () => {
               const error = new Error("bad");
               const rejection = Promise.reject(error);
               rejection.catch(() => {});
-              sandbox.stub(articles.db, "execute").returns(rejection);
+              vitest.spyOn(articles.db, "execute").mockReturnValue(rejection);
 
               const res = await articles.pullChanges(client, result);
-              res.errors.should.deep.equal([
+              expect(res.errors).toStrictEqual([
                 {
                   type: "incoming",
                   message: error.message,
@@ -2218,9 +2227,9 @@ describe("Collection", () => {
           });
 
           it("should resolve listing conflicting changes with MANUAL strategy", async () => {
-            sandbox
-              .stub(KintoClientCollection.prototype, "listRecords")
-              .returns(
+            vitest
+              .spyOn(KintoClientCollection.prototype, "listRecords")
+              .mockReturnValue(
                 Promise.resolve({
                   data: [
                     { id: createdId, title: "art2mod", last_modified: 42 }, // will conflict with unsynced local record
@@ -2233,7 +2242,7 @@ describe("Collection", () => {
               );
 
             const res = await articles.pullChanges(client, result);
-            res["toObject"]().should.deep.equal({
+            expect(res["toObject"]()).toStrictEqual({
               ok: false,
               lastModified: 42,
               errors: [],
@@ -2269,9 +2278,9 @@ describe("Collection", () => {
               remote,
             };
             const resolution = { ...local, title: "resolved" };
-            sandbox
-              .stub(KintoClientCollection.prototype, "listRecords")
-              .returns(
+            vitest
+              .spyOn(KintoClientCollection.prototype, "listRecords")
+              .mockReturnValue(
                 Promise.resolve({
                   data: [remote],
                   next: (() => {}) as any,
@@ -2283,7 +2292,7 @@ describe("Collection", () => {
             const syncResult = new SyncResultObject();
             await articles.resolve(conflict, resolution);
             const result = await articles.pullChanges(client, syncResult);
-            result["toObject"]().should.deep.equal({
+            expect(result["toObject"]()).toStrictEqual({
               ok: true,
               lastModified: 42,
               errors: [],
@@ -2304,9 +2313,9 @@ describe("Collection", () => {
           beforeEach(async () => {
             const res = await articles.create({ title: "art2" });
             createdId = res.data.id;
-            sandbox
-              .stub(KintoClientCollection.prototype, "listRecords")
-              .returns(
+            vitest
+              .spyOn(KintoClientCollection.prototype, "listRecords")
+              .mockReturnValue(
                 Promise.resolve({
                   data: [{ id: createdId, title: "art2", last_modified: 0 }],
                   next: (() => {}) as any,
@@ -2319,7 +2328,7 @@ describe("Collection", () => {
 
           it("should resolve with solved changes", async () => {
             const res = await articles.pullChanges(client, result);
-            res["toObject"]().should.deep.equal({
+            expect(res["toObject"]()).toStrictEqual({
               ok: true,
               lastModified: 42,
               errors: [],
@@ -2356,10 +2365,12 @@ describe("Collection", () => {
 
         it("should return errors when encountered", async () => {
           const error = new Error("unknown error");
-          sandbox.stub(articles.db, "execute").returns(Promise.reject(error));
+          vitest
+            .spyOn(articles.db, "execute")
+            .mockReturnValue(Promise.reject(error));
 
           const res = await articles.importChanges(result, [{ title: "bar" }]);
-          res.errors.should.deep.equal([
+          expect(res.errors).toStrictEqual([
             {
               type: "incoming",
               message: error.message,
@@ -2371,16 +2382,18 @@ describe("Collection", () => {
         it("should only retrieve the changed record", async () => {
           const id1 = uuid4();
           const id2 = uuid4();
-          const execute = sandbox
-            .stub(articles.db, "execute")
-            .returns(Promise.resolve([]));
+          const execute = vitest
+            .spyOn(articles.db, "execute")
+            .mockReturnValue(Promise.resolve([]));
 
           await articles.importChanges(result, [
             { id: id1, title: "foo" },
             { id: id2, title: "bar" },
           ]);
-          const preload = execute.lastCall.args[1]!.preload;
-          expect(preload).eql([id1, id2]);
+          expect(execute.mock.lastCall[1]).toHaveProperty("preload", [
+            id1,
+            id2,
+          ]);
         });
 
         it("should merge remote with local fields", async () => {
@@ -2461,42 +2474,44 @@ describe("Collection", () => {
         });
 
         it("should publish local changes to the server", async () => {
-          const batchRequests = sandbox
-            .stub(Api.prototype, "_batchRequests" as any)
-            .returns(Promise.resolve([{}]));
+          const batchRequests = vitest
+            .spyOn(Api.prototype, "_batchRequests" as any)
+            .mockReturnValue(Promise.resolve([{}]));
 
           await articles.pushChanges(client, records, result);
-          const requests = batchRequests.firstCall.args[0];
-          const options = batchRequests.firstCall.args[1];
+          const requests = batchRequests.mock.lastCall[0];
+          const options = batchRequests.mock.lastCall[1];
           expect(requests).to.have.lengthOf(1);
-          expect(requests[0].body.data.title).equal("foo");
+          expect(requests[0].body.data).toHaveProperty("title", "foo");
           expect(options.safe).equal(true);
         });
 
         it("should not publish local fields to the server", async () => {
-          const batchRequests = sandbox
-            .stub(Api.prototype, "_batchRequests" as any)
-            .returns(Promise.resolve([{}]));
+          const batchRequests = vitest
+            .spyOn(Api.prototype, "_batchRequests" as any)
+            .mockReturnValue(Promise.resolve([{}]));
 
           articles = testCollection({ localFields: ["size"] });
           const toSync = [{ ...records[0], title: "ah", size: 3.14 }];
           await articles.pushChanges(client, toSync, result);
-          const requests = batchRequests.firstCall.args[0];
-          expect(requests[0].body.data.title).equal("ah");
-          expect(requests[0].body.data.size).to.not.exist;
+          const requests = batchRequests.mock.lastCall[0];
+          expect(requests[0].body.data).toHaveProperty("title", "ah");
+          expect(requests[0].body.data.size).toBeUndefined();
         });
 
         it("should update published records local status", async () => {
-          sandbox.stub(KintoClientCollection.prototype, "batch").returns(
-            Promise.resolve({
-              published: [{ data: records[0] }],
-              errors: [],
-              conflicts: [],
-              skipped: [],
-            })
-          );
+          vitest
+            .spyOn(KintoClientCollection.prototype, "batch")
+            .mockReturnValue(
+              Promise.resolve({
+                published: [{ data: records[0] }],
+                errors: [],
+                conflicts: [],
+                skipped: [],
+              })
+            );
           const res = await articles.pushChanges(client, records, result);
-          res.published.should.deep.equal([
+          expect(res.published).toStrictEqual([
             {
               _status: "synced",
               id: records[0].id,
@@ -2506,13 +2521,13 @@ describe("Collection", () => {
         });
 
         it("should not publish records created and deleted locally and never synced", async () => {
-          const batchRequests = sandbox
-            .stub(Api.prototype, "_batchRequests" as any)
-            .returns(Promise.resolve([]));
+          const batchRequests = vitest
+            .spyOn(Api.prototype, "_batchRequests" as any)
+            .mockReturnValue(Promise.resolve([]));
 
           const toDelete = [{ id: records[0].id, _status: "deleted" }]; // no timestamp.
           await articles.pushChanges(client, toDelete, result);
-          const requests = batchRequests.firstCall.args[0];
+          const requests = batchRequests.mock.lastCall[0];
           expect(requests).eql([]);
         });
 
@@ -2520,14 +2535,16 @@ describe("Collection", () => {
           const record = await articles.create({
             title: "record to be deleted",
           });
-          sandbox.stub(KintoClientCollection.prototype, "batch").returns(
-            Promise.resolve({
-              published: [{ data: { id: record.data.id, deleted: true } }],
-              errors: [],
-              conflicts: [],
-              skipped: [],
-            })
-          );
+          vitest
+            .spyOn(KintoClientCollection.prototype, "batch")
+            .mockReturnValue(
+              Promise.resolve({
+                published: [{ data: { id: record.data.id, deleted: true } }],
+                errors: [],
+                conflicts: [],
+                skipped: [],
+              })
+            );
           await articles.delete(record.data.id);
           await articles.pushChanges(client, records, result);
           await expectAsyncError(
@@ -2537,35 +2554,39 @@ describe("Collection", () => {
         });
 
         it("should delete locally the records deleted remotely", async () => {
-          sandbox.stub(KintoClientCollection.prototype, "batch").returns(
-            Promise.resolve({
-              published: [{ data: { id: records[0].id, deleted: true } }],
-              errors: [],
-              conflicts: [],
-              skipped: [],
-            })
-          );
+          vitest
+            .spyOn(KintoClientCollection.prototype, "batch")
+            .mockReturnValue(
+              Promise.resolve({
+                published: [{ data: { id: records[0].id, deleted: true } }],
+                errors: [],
+                conflicts: [],
+                skipped: [],
+              })
+            );
           const res = await articles.pushChanges(client, [], result);
-          res.published.should.deep.equal([
+          expect(res.published).toStrictEqual([
             { id: records[0].id, deleted: true },
           ]);
         });
 
         it("should delete locally the records already deleted remotely", async () => {
           const id = records[0].id;
-          sandbox.stub(KintoClientCollection.prototype, "batch").returns(
-            Promise.resolve({
-              published: [],
-              errors: [],
-              conflicts: [],
-              skipped: [
-                {
-                  id,
-                  error: { errno: 110, code: 404, error: "Not found" },
-                },
-              ],
-            })
-          );
+          vitest
+            .spyOn(KintoClientCollection.prototype, "batch")
+            .mockReturnValue(
+              Promise.resolve({
+                published: [],
+                errors: [],
+                conflicts: [],
+                skipped: [
+                  {
+                    id,
+                    error: { errno: 110, code: 404, error: "Not found" },
+                  },
+                ],
+              })
+            );
           await articles.create(
             { id, title: "bar" },
             { useRecordId: true, synced: true }
@@ -2579,27 +2600,19 @@ describe("Collection", () => {
 
         describe("Batch requests made", () => {
           let batch: {
-              deleteRecord: () => void;
-              createRecord: () => void;
-              updateRecord: () => void;
-            },
-            batchSpy: sinon.SinonMock,
-            deleteRecord: sinon.SinonExpectation,
-            createRecord: sinon.SinonExpectation,
-            updateRecord: sinon.SinonExpectation;
+            deleteRecord: Mock;
+            createRecord: Mock;
+            updateRecord: Mock;
+          };
           beforeEach(() => {
             batch = {
-              deleteRecord() {},
-              createRecord() {},
-              updateRecord() {},
+              deleteRecord: vitest.fn(),
+              createRecord: vitest.fn(),
+              updateRecord: vitest.fn(),
             };
-            batchSpy = sandbox.mock(batch);
-            deleteRecord = batchSpy.expects("deleteRecord");
-            createRecord = batchSpy.expects("createRecord");
-            updateRecord = batchSpy.expects("updateRecord");
-            sandbox
-              .stub(KintoClientCollection.prototype, "batch")
-              .callsFake((f) => {
+            vitest
+              .spyOn(KintoClientCollection.prototype, "batch")
+              .mockImplementation((f) => {
                 f(batch as unknown as KintoClientCollection);
                 return Promise.resolve({
                   published: [],
@@ -2616,12 +2629,11 @@ describe("Collection", () => {
               _status: "deleted",
               last_modified: 1234,
             };
-            deleteRecord.once();
-            createRecord.never();
-            updateRecord.never();
             await articles.pushChanges(client, [myDeletedRecord], result);
-            batchSpy.verify();
-            deleteRecord.firstCall.args.should.deep.equal([myDeletedRecord]);
+            expect(batch.deleteRecord).toHaveBeenCalledOnce();
+            expect(batch.createRecord).not.toHaveBeenCalled();
+            expect(batch.updateRecord).not.toHaveBeenCalled();
+            expect(batch.deleteRecord).toHaveBeenCalledWith(myDeletedRecord);
           });
 
           it("should call create() for created records", async () => {
@@ -2629,14 +2641,13 @@ describe("Collection", () => {
               id: "created-record-id",
               _status: "created",
             };
-            deleteRecord.never();
-            createRecord.once();
-            updateRecord.never();
             await articles.pushChanges(client, [myCreatedRecord], result);
-            batchSpy.verify();
-            createRecord.firstCall.args.should.deep.equal([
-              { id: "created-record-id" },
-            ]);
+            expect(batch.deleteRecord).not.toHaveBeenCalled();
+            expect(batch.createRecord).toHaveBeenCalledOnce();
+            expect(batch.updateRecord).not.toHaveBeenCalled();
+            expect(batch.createRecord).toHaveBeenCalledWith({
+              id: "created-record-id",
+            });
           });
 
           it("should call update() for updated records", async () => {
@@ -2645,14 +2656,14 @@ describe("Collection", () => {
               _status: "updated",
               last_modified: 1234,
             };
-            deleteRecord.never();
-            createRecord.never();
-            updateRecord.once();
             await articles.pushChanges(client, [myUpdatedRecord], result);
-            batchSpy.verify();
-            updateRecord.firstCall.args.should.deep.equal([
-              { id: "updated-record-id", last_modified: 1234 },
-            ]);
+            expect(batch.deleteRecord).not.toHaveBeenCalled();
+            expect(batch.createRecord).not.toHaveBeenCalled();
+            expect(batch.updateRecord).toHaveBeenCalledOnce();
+            expect(batch.updateRecord).toHaveBeenCalledWith({
+              id: "updated-record-id",
+              last_modified: 1234,
+            });
           });
         });
 
@@ -2667,24 +2678,26 @@ describe("Collection", () => {
           };
 
           beforeEach(() => {
-            sandbox.stub(KintoClientCollection.prototype, "batch").returns(
-              Promise.resolve({
-                errors: [error],
-                published: [],
-                conflicts: [],
-                skipped: [],
-              })
-            );
+            vitest
+              .spyOn(KintoClientCollection.prototype, "batch")
+              .mockReturnValue(
+                Promise.resolve({
+                  errors: [error],
+                  published: [],
+                  conflicts: [],
+                  skipped: [],
+                })
+              );
           });
 
           it("should report encountered publication errors", async () => {
             const res = await articles.pushChanges(client, records, result);
-            res.errors.should.deep.equal([{ ...error, type: "outgoing" }]);
+            expect(res.errors).toStrictEqual([{ ...error, type: "outgoing" }]);
           });
 
           it("should report typed publication errors", async () => {
             const res = await articles.pushChanges(client, records, result);
-            res.errors[0].should.have.property("type").equal("outgoing");
+            expect(res.errors[0]).toHaveProperty("type", "outgoing");
           });
         });
       });
@@ -2705,13 +2718,13 @@ describe("Collection", () => {
               return articles.create(fixture, { synced: true });
             })
           );
-          return articles.delete(fixtures[1].id);
+          await articles.delete(fixtures[1].id);
         });
 
         it("should reset the synced status of all local records", async () => {
           await articles.resetSyncStatus();
           const list = await articles.list({ filters: { _status: "synced" } });
-          list.should.have.property("data").to.have.length(0);
+          expect(list.data).toHaveLength(0);
         });
 
         it("should garbage collect the locally deleted records", async () => {
@@ -2720,7 +2733,7 @@ describe("Collection", () => {
             { filters: { _status: "deleted" } },
             { includeDeleted: true }
           );
-          list.should.have.property("data").to.have.length(0);
+          expect(list.data).toHaveLength(0);
         });
 
         it("should clear last modified value of all records", async () => {
@@ -2737,7 +2750,7 @@ describe("Collection", () => {
 
         it("should resolve with the number of local records processed ", async () => {
           const num = await articles.resetSyncStatus();
-          num.should.equal(3);
+          expect(num).equal(3);
         });
       });
 
@@ -2752,16 +2765,20 @@ describe("Collection", () => {
 
         beforeEach(async () => {
           articles = testCollection();
-          sandbox.stub(api, "batch").get(() => () => ({
+          vitest.spyOn(api, "batch").mockResolvedValue({
             errors: [] as any[],
             published: [] as any[],
             conflicts: [] as any[],
             skipped: [] as any[],
-          }));
+          });
           const res = await Promise.all(
             fixtures.map((fixture) => articles.create(fixture))
           );
           ids = res.map((r) => r.data.id);
+          // block cors/option requests from fetch
+          vitest
+            .spyOn(articles.api.http, "timedFetch")
+            .mockReturnValue(fakeServerResponse(200, { data: [] }, {}) as any);
         });
 
         it("should validate the remote option", async () => {
@@ -2772,43 +2789,48 @@ describe("Collection", () => {
         });
 
         it("should use a custom remote option", async () => {
-          sandbox.stub(articles, "importChanges");
-          sandbox
-            .stub(articles, "pushChanges")
-            .returns(Promise.resolve(new SyncResultObject()));
-          const fetch = sandbox
-            .stub(articles.api.http, "timedFetch")
-            .returns(fakeServerResponse(200, { data: [] }, {}) as any);
+          vitest.spyOn(articles, "importChanges");
+          vitest
+            .spyOn(articles, "pushChanges")
+            .mockReturnValue(Promise.resolve(new SyncResultObject()));
+          const fetch = vitest
+            .spyOn(articles.api.http, "timedFetch")
+            .mockReturnValue(fakeServerResponse(200, { data: [] }, {}) as any);
 
           await articles.sync({ remote: "http://test/v1" });
-          sinon.assert.calledWith(
-            fetch,
-            sinon.match(/http:\/\/test\/v1/),
-            sinon.match.any
+          expect(fetch).toHaveBeenCalledWith(
+            expect.stringMatching(/http:\/\/test\/v1/),
+            {
+              mode: "cors",
+              headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+              },
+            }
           );
         });
 
         it("should revert the custom remote option on success", async () => {
-          sandbox.stub(articles, "importChanges");
-          sandbox
-            .stub(articles, "pushChanges")
-            .returns(Promise.resolve(new SyncResultObject()));
-          sandbox
-            .stub(articles.api.http, "timedFetch")
-            .returns(fakeServerResponse(200, { data: [] }, {}) as any);
+          vitest.spyOn(articles, "importChanges");
+          vitest
+            .spyOn(articles, "pushChanges")
+            .mockReturnValue(Promise.resolve(new SyncResultObject()));
+          vitest
+            .spyOn(articles.api.http, "timedFetch")
+            .mockReturnValue(fakeServerResponse(200, { data: [] }, {}) as any);
 
           await articles.sync({ remote: "http://test/v1" });
           expect(api.remote).equal(FAKE_SERVER_URL);
         });
 
         it("should revert the custom remote option on failure", async () => {
-          sandbox.stub(articles, "importChanges");
+          vitest.spyOn(articles, "importChanges");
           const rejection = Promise.reject("boom");
           rejection.catch(() => {});
-          sandbox.stub(articles, "pushChanges").returns(rejection);
-          sandbox
-            .stub(articles.api.http, "timedFetch")
-            .returns(fakeServerResponse(200, { data: [] }, {}) as any);
+          vitest.spyOn(articles, "pushChanges").mockReturnValue(rejection);
+          vitest
+            .spyOn(articles.api.http, "timedFetch")
+            .mockReturnValue(fakeServerResponse(200, { data: [] }, {}) as any);
 
           try {
             await articles.sync({ remote: "http://test/v1" });
@@ -2818,200 +2840,208 @@ describe("Collection", () => {
 
         it("should load fixtures", async () => {
           const res = await articles.list();
-          res.data.should.have.lengthOf(3);
+          expect(res.data).toHaveLength(3);
         });
 
         it("should pullMetadata with options", async () => {
-          const pullMetadata = sandbox.stub(articles, "pullMetadata");
-          sandbox.stub(KintoClientCollection.prototype, "listRecords").returns(
-            Promise.resolve({
+          const pullMetadata = vitest
+            .spyOn(articles, "pullMetadata")
+            .mockResolvedValue({});
+          vitest
+            .spyOn(KintoClientCollection.prototype, "listRecords")
+            .mockResolvedValue({
               last_modified: "42",
               next: (() => {}) as any,
               data: [],
               hasNextPage: false,
               totalRecords: 0,
-            })
-          );
+            });
           const options = {
             headers: {
               Authorization: "Basic 123",
             },
           };
           await articles.sync(options);
-          expect(pullMetadata.callCount).equal(1);
+          expect(pullMetadata).toHaveBeenCalledOnce();
           // First argument is the client, which we don't care too much about
           // Second argument is the options
-          expect(pullMetadata.getCall(0).args[1]).include(options);
+          expect(pullMetadata.mock.lastCall[1]).include(options);
         });
 
         it("should fetch latest changes from the server", async () => {
-          sandbox.stub(articles, "pullMetadata");
-          const listRecords = sandbox
-            .stub(KintoClientCollection.prototype, "listRecords")
-            .returns(
-              Promise.resolve({
-                last_modified: "42",
-                next: (() => {}) as any,
-                data: [],
-                hasNextPage: false,
-                totalRecords: 0,
-              })
-            );
-          await articles.sync();
-          // Never synced so we fetch all the records from the server
-          sinon.assert.calledWithMatch(listRecords, { since: undefined });
-        });
-
-        it("should store latest lastModified value when no conflicts", async () => {
-          sandbox.stub(articles, "pullMetadata");
-          sandbox.stub(KintoClientCollection.prototype, "listRecords").returns(
-            Promise.resolve({
+          vitest.spyOn(articles, "pullMetadata");
+          const listRecords = vitest
+            .spyOn(KintoClientCollection.prototype, "listRecords")
+            .mockResolvedValue({
               last_modified: "42",
               next: (() => {}) as any,
               data: [],
               hasNextPage: false,
               totalRecords: 0,
+            });
+          await articles.sync();
+          // Never synced so we fetch all the records from the server
+          expect(listRecords).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              since: undefined,
             })
           );
+        });
+
+        it("should store latest lastModified value when no conflicts", async () => {
+          vitest.spyOn(articles, "pullMetadata");
+          vitest
+            .spyOn(KintoClientCollection.prototype, "listRecords")
+            .mockResolvedValue({
+              last_modified: "42",
+              next: (() => {}) as any,
+              data: [],
+              hasNextPage: false,
+              totalRecords: 0,
+            });
           await articles.sync();
           expect(articles.lastModified).equal(42);
         });
 
         it("shouldn't store latest lastModified on conflicts", async () => {
-          sandbox.stub(articles, "pullMetadata");
-          sandbox.stub(KintoClientCollection.prototype, "listRecords").returns(
-            Promise.resolve({
-              last_modified: "43",
-              next: (() => {}) as any,
-              data: [
-                {
-                  id: ids[0],
-                  title: "art1mod",
-                  last_modified: 43,
-                },
-              ],
-              hasNextPage: false,
-              totalRecords: 1,
-            })
-          );
+          vitest.spyOn(articles, "pullMetadata");
+          vitest
+            .spyOn(KintoClientCollection.prototype, "listRecords")
+            .mockReturnValue(
+              Promise.resolve({
+                last_modified: "43",
+                next: (() => {}) as any,
+                data: [
+                  {
+                    id: ids[0],
+                    title: "art1mod",
+                    last_modified: 43,
+                  },
+                ],
+                hasNextPage: false,
+                totalRecords: 1,
+              })
+            );
           await articles.sync();
           expect(articles.lastModified).equal(null);
         });
 
         it("shouldn't store latest lastModified on errors", async () => {
-          sandbox.stub(articles, "pullMetadata");
-          sandbox.stub(KintoClientCollection.prototype, "listRecords").returns(
-            Promise.resolve({
-              last_modified: "43",
-              next: (() => {}) as any,
-              data: [
-                {
-                  id: ids[0],
-                  title: "art1mod",
-                  last_modified: 0,
-                },
-              ],
-              hasNextPage: false,
-              totalRecords: 0,
-            })
-          );
+          vitest.spyOn(articles, "pullMetadata");
+          vitest
+            .spyOn(KintoClientCollection.prototype, "listRecords")
+            .mockReturnValue(
+              Promise.resolve({
+                last_modified: "43",
+                next: (() => {}) as any,
+                data: [
+                  {
+                    id: ids[0],
+                    title: "art1mod",
+                    last_modified: 0,
+                  },
+                ],
+                hasNextPage: false,
+                totalRecords: 0,
+              })
+            );
           const rejection = Promise.reject(new Error("error"));
           rejection.catch(() => {});
-          sandbox.stub(articles.db, "execute").returns(rejection);
+          vitest.spyOn(articles.db, "execute").mockReturnValue(rejection);
           await articles.sync();
           expect(articles.lastModified).equal(null);
         });
 
         it("should not execute a last pull on push failure", async () => {
-          sandbox.stub(articles, "pullMetadata");
-          const pullChanges = sandbox.stub(articles, "pullChanges");
-          sandbox
-            .stub(articles, "pushChanges")
-            .callsFake((client, changes, result) => {
+          vitest.spyOn(articles, "pullMetadata");
+          const pullChanges = vitest.spyOn(articles, "pullChanges");
+          vitest
+            .spyOn(articles, "pushChanges")
+            .mockImplementation((client, changes, result) => {
               result.add("conflicts", [1 as any]);
               return Promise.resolve(result);
             });
           await articles.sync();
-          return sinon.assert.calledOnce(pullChanges);
+          expect(pullChanges).toHaveBeenCalledOnce();
         });
 
         it("should not execute a last pull if nothing to push", async () => {
-          sandbox.stub(articles, "pullMetadata");
-          sandbox
-            .stub(articles, "gatherLocalChanges")
-            .returns(Promise.resolve([]));
-          const pullChanges = sandbox
-            .stub(articles, "pullChanges")
-            .returns(Promise.resolve(new SyncResultObject()));
+          vitest.spyOn(articles, "pullMetadata");
+          vitest
+            .spyOn(articles, "gatherLocalChanges")
+            .mockReturnValue(Promise.resolve([]));
+          const pullChanges = vitest
+            .spyOn(articles, "pullChanges")
+            .mockReturnValue(Promise.resolve(new SyncResultObject()));
           await articles.sync();
-          sinon.assert.calledOnce(pullChanges);
+          expect(pullChanges).toHaveBeenCalledOnce();
         });
 
         it("should not redownload pushed changes", async () => {
           const record1 = { id: uuid4(), title: "blog" };
           const record2 = { id: uuid4(), title: "post" };
-          sandbox.stub(articles, "pullMetadata");
-          const pullChangesStub = sandbox.stub(articles, "pullChanges");
-          sandbox
-            .stub(articles, "pushChanges")
-            .callsFake((client, changes, result) => {
+          vitest.spyOn(articles, "pullMetadata");
+          const pullChangesStub = vitest.spyOn(articles, "pullChanges");
+          vitest
+            .spyOn(articles, "pushChanges")
+            .mockImplementation((client, changes, result) => {
               result.add("published", record1);
               result.add("published", record2);
               return Promise.resolve(result);
             });
           const res = await articles.sync();
           expect(res.published).to.have.length(2);
-          expect(pullChangesStub.lastCall.args[2]!.exclude).eql([
+          expect(pullChangesStub.mock.lastCall[2]!.exclude).eql([
             record1,
             record2,
           ]);
         });
 
         it("should store collection metadata", async () => {
-          sandbox.stub(articles, "pullChanges");
+          vitest.spyOn(articles, "pullChanges");
           const metadata = { id: "articles", last_modified: 42 };
-          sandbox
-            .stub(KintoClientCollection.prototype, "getData")
-            .returns(Promise.resolve(metadata));
+          vitest
+            .spyOn(KintoClientCollection.prototype, "getData")
+            .mockReturnValue(Promise.resolve(metadata));
           await articles.sync();
           const stored = await articles.metadata();
           expect(stored).to.deep.equal(metadata);
         });
 
         describe("Options", () => {
-          let pullChanges: sinon.SinonStub;
+          let pullChanges: Mock;
 
           beforeEach(() => {
-            sandbox.stub(articles, "pullMetadata");
-            pullChanges = sandbox
-              .stub(articles, "pullChanges")
-              .returns(Promise.resolve(new SyncResultObject())) as any;
+            vitest.spyOn(articles, "pullMetadata");
+            pullChanges = vitest
+              .spyOn(articles, "pullChanges")
+              .mockReturnValue(Promise.resolve(new SyncResultObject())) as any;
           });
 
           it("should transfer the headers option", async () => {
             await articles.sync({ headers: { Foo: "Bar" } });
-            expect(pullChanges.firstCall.args[2])
+            expect(pullChanges.mock.lastCall[2])
               .to.have.property("headers")
               .eql({ Foo: "Bar" });
           });
 
           it("should transfer the strategy option", async () => {
             await articles.sync({ strategy: Collection.strategy.SERVER_WINS });
-            expect(pullChanges.firstCall.args[2])
+            expect(pullChanges.mock.lastCall[2])
               .to.have.property("strategy")
               .equal(Collection.strategy.SERVER_WINS);
           });
 
           it("should transfer the retry option", async () => {
             await articles.sync({ retry: 3 });
-            expect(pullChanges.firstCall.args[2])
+            expect(pullChanges.mock.lastCall[2])
               .to.have.property("retry")
               .equal(3);
           });
 
           it("should transfer the expectedTimestamp option", async () => {
             await articles.sync({ expectedTimestamp: '"123"' });
-            expect(pullChanges.firstCall.args[2])
+            expect(pullChanges.mock.lastCall[2])
               .to.have.property("expectedTimestamp")
               .equal('"123"');
           });
@@ -3029,16 +3059,16 @@ describe("Collection", () => {
           });
 
           it("should perform sync on server backoff when ignoreBackoff is true", async () => {
-            sandbox
-              .stub(articles.db, "getLastModified")
-              .returns(Promise.resolve(0));
-            sandbox.stub(articles, "pullMetadata");
-            const pullChanges = sandbox.stub(articles, "pullChanges");
-            sandbox.stub(articles, "pushChanges");
+            vitest
+              .spyOn(articles.db, "getLastModified")
+              .mockReturnValue(Promise.resolve(0));
+            vitest.spyOn(articles, "pullMetadata");
+            const pullChanges = vitest.spyOn(articles, "pullChanges");
+            vitest.spyOn(articles, "pushChanges");
             articles.api.events!.emit("backoff", new Date().getTime() + 30000);
 
             await articles.sync({ ignoreBackoff: true });
-            return sinon.assert.calledOnce(pullChanges);
+            expect(pullChanges).toHaveBeenCalledOnce();
           });
         });
 
@@ -3047,27 +3077,25 @@ describe("Collection", () => {
 
           beforeEach(() => {
             // Disable stubbing of HTTP client of upper tests.
-            sandbox.restore();
+            vitest.restoreAllMocks();
             // Stub low-level fetch instead.
-            fetch = sandbox.stub(articles.api.http, "timedFetch");
+            fetch = vitest.spyOn(articles.api.http, "timedFetch");
             // Pull metadata
-            fetch
-              .onCall(0)
-              .returns(fakeServerResponse(200, { data: {} }, {}) as any);
+            fetch.mockReturnValueOnce(
+              fakeServerResponse(200, { data: {} }, {}) as any
+            );
             // Pull records
-            fetch
-              .onCall(1)
-              .returns(fakeServerResponse(200, { data: [] }, {}) as any);
+            fetch.mockReturnValueOnce(
+              fakeServerResponse(200, { data: [] }, {}) as any
+            );
             // Push
-            fetch
-              .onCall(2)
-              .returns(fakeServerResponse(200, { settings: {} }, {}) as any);
-            fetch
-              .onCall(3)
-              .returns(
-                fakeServerResponse(503, {}, { "Retry-After": "1" }) as any
-              );
-            fetch.onCall(4).returns(
+            fetch.mockReturnValueOnce(
+              fakeServerResponse(200, { settings: {} }, {}) as any
+            );
+            fetch.mockReturnValueOnce(
+              fakeServerResponse(503, {}, { "Retry-After": "1" }) as any
+            );
+            fetch.mockReturnValueOnce(
               fakeServerResponse(
                 200,
                 {
@@ -3090,9 +3118,9 @@ describe("Collection", () => {
               ) as any
             );
             // Last pull
-            fetch
-              .onCall(5)
-              .returns(fakeServerResponse(200, { data: [] }, {}) as any);
+            fetch.mockReturnValueOnce(
+              fakeServerResponse(200, { data: [] }, {}) as any
+            );
           });
 
           it("should retry if specified", async () => {
@@ -3102,43 +3130,43 @@ describe("Collection", () => {
         });
 
         describe("Events", () => {
-          let onsuccess: sinon.SinonSpy;
-          let onerror: sinon.SinonSpy;
-          let pushChangesStub: sinon.SinonStub;
+          let onsuccess: Mock;
+          let onerror: Mock;
+          let pushChangesStub: Mock;
 
           beforeEach(() => {
-            onsuccess = sinon.spy();
-            onerror = sinon.spy();
+            onsuccess = vitest.fn();
+            onerror = vitest.fn();
             articles.events.on("sync:success", onsuccess);
             articles.events.on("sync:error", onerror);
 
-            sandbox
-              .stub(articles.db, "getLastModified")
-              .returns(Promise.resolve(0));
-            sandbox.stub(articles, "pullMetadata");
-            sandbox.stub(articles, "pullChanges");
-            pushChangesStub = sandbox.stub(articles, "pushChanges") as any;
+            vitest
+              .spyOn(articles.db, "getLastModified")
+              .mockReturnValue(Promise.resolve(0));
+            vitest.spyOn(articles, "pullMetadata");
+            vitest.spyOn(articles, "pullChanges");
+            pushChangesStub = vitest.spyOn(articles, "pushChanges") as any;
           });
 
           it("should send a success event", async () => {
             await articles.sync();
-            expect(onsuccess.called).equal(true);
-            expect(onerror.called).equal(false);
+            expect(onsuccess).toHaveBeenCalled();
+            expect(onerror).not.toHaveBeenCalled();
           });
 
           it("should send an error event", async () => {
-            pushChangesStub.throws(new Error("boom"));
+            pushChangesStub.mockRejectedValue(new Error("boom"));
             try {
               await articles.sync();
             } catch (e) {
-              expect(onsuccess.called).equal(false);
-              expect(onerror.called).equal(true);
+              expect(onsuccess).not.toHaveBeenCalled();
+              expect(onerror).toHaveBeenCalled();
             }
           });
 
           it("should provide success details about sync", async () => {
             await articles.sync();
-            const data = onsuccess.firstCall.args[0];
+            const data = onsuccess.mock.lastCall[0];
             expect(data).to.have.property("result");
             expect(data).to.have.property("remote");
             expect(data).to.have.property("bucket");
@@ -3147,11 +3175,11 @@ describe("Collection", () => {
           });
 
           it("should provide error details about sync", async () => {
-            pushChangesStub.throws(new Error("boom"));
+            pushChangesStub.mockRejectedValue(new Error("boom"));
             try {
               await articles.sync();
             } catch (e) {
-              const data = onerror.firstCall.args[0];
+              const data = onerror.mock.lastCall[0];
               expect(data).to.have.property("error");
               expect(data).to.have.property("remote");
               expect(data).to.have.property("bucket");
@@ -3320,10 +3348,10 @@ describe("Collection", () => {
           };
 
           const client = {
-            getData: sandbox.stub(),
+            getData: vitest.fn(),
           } as unknown as KintoClientCollection;
           await articles.pullMetadata(client, { headers });
-          sinon.assert.calledWithExactly(client.getData as any, {
+          expect(client.getData).toHaveBeenCalledWith({
             headers,
           });
         });
@@ -3451,18 +3479,18 @@ describe("Collection", () => {
 
         describe("Transactions", () => {
           it("should send every events of a transaction", async () => {
-            const callback = sinon.spy();
+            const callback = vitest.fn();
             articles.events.on("create", callback);
 
             await articles.execute((txn) => {
               txn.create({ id: uuid4(), title: "foo" });
               txn.create({ id: uuid4(), title: "bar" });
             });
-            return expect(callback.callCount).to.equal(2);
+            expect(callback).toHaveBeenCalledTimes(2);
           });
 
           it("should not send any event if the transaction fails", async () => {
-            const callback = sinon.spy();
+            const callback = vitest.fn();
             articles.events.on("create", callback);
 
             try {
@@ -3471,21 +3499,21 @@ describe("Collection", () => {
                 throw new Error("Fail!");
               });
             } catch (e) {}
-            return expect(callback.callCount).equal(0);
+            expect(callback).toHaveBeenCalledTimes(0);
           });
 
           it("should not send any change event if nothing happens in transaction", async () => {
-            const callback = sinon.spy();
+            const callback = vitest.fn();
             articles.events.on("change", callback);
 
             await articles.execute((txn) => {
               txn.deleteAny(uuid4());
             });
-            return expect(callback.callCount).equal(0);
+            expect(callback).toHaveBeenCalledTimes(0);
           });
 
           it("should send a single changed event for the whole transaction", async () => {
-            const callback = sinon.spy();
+            const callback = vitest.fn();
             const id = uuid4();
             const id2 = uuid4();
 
@@ -3499,8 +3527,8 @@ describe("Collection", () => {
               },
               { preloadIds: [id] }
             );
-            expect(callback.callCount).equal(1);
-            const payload = callback.lastCall.args[0];
+            expect(callback).toHaveBeenCalledOnce();
+            const payload = callback.mock.lastCall[0];
             const { targets } = payload;
             expect(targets.length).equal(3);
             expect(targets[0]).eql({

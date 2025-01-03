@@ -1,28 +1,22 @@
 /* eslint dot-notation: off */
-import sinon from "sinon";
-
 import IDB, { open, execute } from "../../src/adapters/IDB";
 import { v4 as uuid4 } from "uuid";
 import { StorageProxy } from "../../src/adapters/base";
 import { KintoIdObject } from "../../src/http";
 import { expectAsyncError } from "../test_utils";
 
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, before, beforeEach, after, afterEach } =
-  intern.getPlugin("interface.bdd");
-
 /** @test {IDB} */
 describe("adapter.IDB", () => {
-  let sandbox: sinon.SinonSandbox, db: IDB<any>;
+  let db = null;
 
   beforeEach(() => {
-    sandbox = sinon.createSandbox();
     db = new IDB("test/foo");
     return db.clear();
   });
 
-  afterEach(() => sandbox.restore());
+  afterEach(() => {
+    vitest.restoreAllMocks();
+  });
 
   /** @test {IDB#open} */
   describe("#open", () => {
@@ -32,7 +26,7 @@ describe("adapter.IDB", () => {
 
     it("should reject on open request error", async () => {
       const fakeOpenRequest = {} as IDBOpenDBRequest;
-      sandbox.stub(indexedDB, "open").returns(fakeOpenRequest);
+      vitest.spyOn(indexedDB, "open").mockReturnValue(fakeOpenRequest);
       const db = new IDB("another/db");
       const prom = db.open();
 
@@ -68,7 +62,7 @@ describe("adapter.IDB", () => {
       });
       await db.clear();
       const list = await db.list();
-      list.should.have.lengthOf(0);
+      expect(list).toHaveLength(0);
     });
 
     it("should isolate records by collection", async () => {
@@ -95,17 +89,19 @@ describe("adapter.IDB", () => {
     });
 
     it("should reject on transaction error", async () => {
-      sandbox.stub(db, "prepare").callsFake(async (name, callback, options) => {
-        callback({
-          index() {
-            return {
-              openKeyCursor() {
-                throw new Error("transaction error");
-              },
-            };
-          },
-        } as any);
-      });
+      vitest
+        .spyOn(db, "prepare")
+        .mockImplementation(async (name, callback, options) => {
+          callback({
+            index() {
+              return {
+                openKeyCursor() {
+                  throw new Error("transaction error");
+                },
+              };
+            },
+          } as any);
+        });
 
       await expectAsyncError(() => db.clear(), /transaction error/);
     });
@@ -119,18 +115,18 @@ describe("adapter.IDB", () => {
 
     describe("No preloading", () => {
       it("should open a connection to the db", async () => {
-        const open = sandbox
-          .stub(db, "open")
-          .returns(Promise.resolve({} as IDB<any>));
+        const open = vitest
+          .spyOn(db, "open")
+          .mockReturnValue(Promise.resolve({} as IDB<any>));
 
         await db.execute(() => {});
-        return sinon.assert.calledOnce(open);
+        expect(open).toHaveBeenCalledOnce();
       });
 
       it("should execute the specified callback", async () => {
-        const callback = sandbox.spy();
+        const callback = vitest.fn();
         await db.execute(callback);
-        return sinon.assert.called(callback);
+        expect(callback).toHaveBeenCalled();
       });
 
       it("should fail if the callback returns a promise", async () => {
@@ -154,20 +150,20 @@ describe("adapter.IDB", () => {
       });
 
       it("should provide a transaction parameter", async () => {
-        const callback = sandbox.spy();
+        const callback = vitest.fn();
         await db.execute(callback);
-        const handler = callback.getCall(0).args[0];
-        expect(handler).to.have.property("get").to.be.a("function");
-        expect(handler).to.have.property("create").to.be.a("function");
-        expect(handler).to.have.property("update").to.be.a("function");
-        expect(handler).to.have.property("delete").to.be.a("function");
+        const handler = callback.mock.lastCall[0];
+        expectTypeOf(handler.get).toBeFunction();
+        expectTypeOf(handler.create).toBeFunction();
+        expectTypeOf(handler.update).toBeFunction();
+        expectTypeOf(handler.delete).toBeFunction();
       });
 
       it("should create a record", async () => {
         const data = { id: "1", foo: "bar" };
         await db.execute((t) => t.create(data));
         const list = await db.list();
-        list.should.deep.equal([data]);
+        expect(list).toStrictEqual([data]);
       });
 
       it("should update a record", async () => {
@@ -177,7 +173,7 @@ describe("adapter.IDB", () => {
           t.update({ ...data, foo: "baz" });
         });
         const res = await db.get(data.id);
-        res!.foo.should.equal("baz");
+        expect(res).toHaveProperty("foo", "baz");
       });
 
       it("should delete a record", async () => {
@@ -187,13 +183,13 @@ describe("adapter.IDB", () => {
           transaction.delete(data.id);
         });
         const id = await db.get(data.id);
-        expect(id).to.equal(undefined);
+        expect(id).toBeUndefined();
       });
 
       it("should reject on store method error", async () => {
-        sandbox
-          .stub(db, "prepare")
-          .callsFake(async (name, callback, options) => {
+        vitest
+          .spyOn(db, "prepare")
+          .mockImplementation(async (name, callback, options) => {
             const abort = (e: Error) => {
               throw e;
             };
@@ -219,9 +215,9 @@ describe("adapter.IDB", () => {
       });
 
       it("should reject on transaction error", async () => {
-        sandbox
-          .stub(db, "prepare")
-          .callsFake(async (name, callback, options) => {
+        vitest
+          .spyOn(db, "prepare")
+          .mockImplementation(async (name, callback, options) => {
             return callback({
               openCursor() {
                 throw new Error("transaction error");
@@ -272,22 +268,24 @@ describe("adapter.IDB", () => {
 
     it("should retrieve a record from its id", async () => {
       const res = await db.get("1");
-      res!.foo.should.equal("bar");
+      expect(res).toHaveProperty("foo", "bar");
     });
 
     it("should return undefined when record is not found", async () => {
       const res = await db.get("999");
-      expect(res).to.equal(undefined);
+      expect(res).toBeUndefined();
     });
 
     it("should reject on transaction error", async () => {
-      sandbox.stub(db, "prepare").callsFake(async (name, callback, options) => {
-        return callback({
-          get() {
-            throw new Error("transaction error");
-          },
-        } as any);
-      });
+      vitest
+        .spyOn(db, "prepare")
+        .mockImplementation(async (name, callback, options) => {
+          return callback({
+            get() {
+              throw new Error("transaction error");
+            },
+          } as any);
+        });
 
       await expectAsyncError(
         () => db.get(undefined as any),
@@ -309,11 +307,11 @@ describe("adapter.IDB", () => {
 
     it("should retrieve the list of records", async () => {
       const list = await db.list();
-      list.should.have.lengthOf(10);
+      expect(list).toHaveLength(10);
     });
 
     it("should prefix error encountered", async () => {
-      sandbox.stub(db, "open").returns(Promise.reject("error"));
+      vitest.spyOn(db, "open").mockReturnValue(Promise.reject("error"));
       await expectAsyncError(
         () => db.list(),
         /^IndexedDB list()/,
@@ -322,17 +320,19 @@ describe("adapter.IDB", () => {
     });
 
     it("should reject on transaction error", async () => {
-      sandbox.stub(db, "prepare").callsFake(async (name, callback, options) => {
-        return callback({
-          index() {
-            return {
-              getAll() {
-                throw new Error("transaction error");
-              },
-            };
-          },
-        } as any);
-      });
+      vitest
+        .spyOn(db, "prepare")
+        .mockImplementation(async (name, callback, options) => {
+          return callback({
+            index() {
+              return {
+                getAll() {
+                  throw new Error("transaction error");
+                },
+              };
+            },
+          } as any);
+        });
 
       await expectAsyncError(
         () => db.list(),
@@ -355,8 +355,8 @@ describe("adapter.IDB", () => {
       await db1.close();
       await db2.close();
 
-      expect(await db1.list()).to.have.length(1);
-      expect(await db2.list()).to.have.length(2);
+      expect(await db1.list()).toHaveLength(1);
+      expect(await db2.list()).toHaveLength(2);
     });
 
     describe("Filters", () => {
@@ -364,14 +364,14 @@ describe("adapter.IDB", () => {
         describe("single value", () => {
           it("should filter the list on a single pre-indexed column", async () => {
             const list = await db.list({ filters: { name: "#4" } });
-            list.should.deep.equal([{ id: "4", name: "#4" }]);
+            expect(list).toStrictEqual([{ id: "4", name: "#4" }]);
           });
         });
 
         describe("multiple values", () => {
           it("should filter the list on a single pre-indexed column", async () => {
             const list = await db.list({ filters: { name: ["#4", "#5"] } });
-            list.should.deep.equal([
+            expect(list).toStrictEqual([
               { id: "4", name: "#4" },
               { id: "5", name: "#5" },
             ]);
@@ -379,19 +379,19 @@ describe("adapter.IDB", () => {
 
           it("should handle non-existent keys", async () => {
             const list = await db.list({ filters: { name: ["#4", "qux"] } });
-            list.should.deep.equal([{ id: "4", name: "#4" }]);
+            expect(list).toStrictEqual([{ id: "4", name: "#4" }]);
           });
 
           it("should handle empty lists", async () => {
             const list = await db.list({ filters: { name: [] } });
-            list.should.deep.equal([]);
+            expect(list).toStrictEqual([]);
           });
         });
 
         describe("combined with indexed fields", () => {
           it("should filter list on both indexed and non-indexed columns", async () => {
             const list = await db.list({ filters: { name: "#4", id: "4" } });
-            list.should.deep.equal([{ id: "4", name: "#4" }]);
+            expect(list).toStrictEqual([{ id: "4", name: "#4" }]);
           });
         });
       });
@@ -400,14 +400,14 @@ describe("adapter.IDB", () => {
         describe("single value", () => {
           it("should filter the list on a single pre-indexed column", async () => {
             const list = await db.list({ filters: { id: "4" } });
-            list.should.deep.equal([{ id: "4", name: "#4" }]);
+            expect(list).toStrictEqual([{ id: "4", name: "#4" }]);
           });
         });
 
         describe("multiple values", () => {
           it("should filter the list on a single pre-indexed column", async () => {
             const list = await db.list({ filters: { id: ["5", "4"] } });
-            list.should.deep.equal([
+            expect(list).toStrictEqual([
               { id: "4", name: "#4" },
               { id: "5", name: "#5" },
             ]);
@@ -417,17 +417,17 @@ describe("adapter.IDB", () => {
             const list = await db.list({
               filters: { id: ["5", "4"], name: "#4" },
             });
-            list.should.deep.equal([{ id: "4", name: "#4" }]);
+            expect(list).toStrictEqual([{ id: "4", name: "#4" }]);
           });
 
           it("should handle non-existent keys", async () => {
             const list = await db.list({ filters: { id: ["4", "9999"] } });
-            list.should.deep.equal([{ id: "4", name: "#4" }]);
+            expect(list).toStrictEqual([{ id: "4", name: "#4" }]);
           });
 
           it("should handle empty lists", async () => {
             const list = await db.list({ filters: { id: [] } });
-            list.should.deep.equal([]);
+            expect(list).toStrictEqual([]);
           });
         });
       });
@@ -440,24 +440,26 @@ describe("adapter.IDB", () => {
    */
   describe("Deprecated #loadDump", () => {
     it("should call importBulk", async () => {
-      const importBulkStub = sandbox
-        .stub(db, "importBulk")
-        .returns(Promise.resolve([]));
+      const importBulkStub = vitest
+        .spyOn(db, "importBulk")
+        .mockReturnValue(Promise.resolve([]));
       await db.loadDump([{ id: "1", last_modified: 0, foo: "bar" }]);
-      return sinon.assert.calledOnce(importBulkStub);
+      expect(importBulkStub).toHaveBeenCalledOnce();
     });
   });
 
   /** @test {IDB#getLastModified} */
   describe("#getLastModified", () => {
     it("should reject with any encountered transaction error", async () => {
-      sandbox.stub(db, "prepare").callsFake(async (name, callback, options) => {
-        return callback({
-          get() {
-            throw new Error("transaction error");
-          },
-        } as any);
-      });
+      vitest
+        .spyOn(db, "prepare")
+        .mockImplementation(async (name, callback, options) => {
+          return callback({
+            get() {
+              throw new Error("transaction error");
+            },
+          } as any);
+        });
 
       await expectAsyncError(() => db.getLastModified(), /transaction error/);
     });
@@ -467,30 +469,32 @@ describe("adapter.IDB", () => {
   describe("#saveLastModified", () => {
     it("should resolve with lastModified value", async () => {
       const res = await db.saveLastModified(42);
-      res.should.equal(42);
+      expect(res).toBe(42);
     });
 
     it("should save a lastModified value", async () => {
       await db.saveLastModified(42);
       const res = await db.getLastModified();
-      res.should.equal(42);
+      expect(res).toBe(42);
     });
 
     it("should allow updating previous value", async () => {
       await db.saveLastModified(42);
       await db.saveLastModified(43);
       const res = await db.getLastModified();
-      res.should.equal(43);
+      expect(res).toBe(43);
     });
 
     it("should reject on transaction error", async () => {
-      sandbox.stub(db, "prepare").callsFake(async (name, callback, options) => {
-        return callback({
-          delete() {
-            throw new Error("transaction error");
-          },
-        } as any);
-      });
+      vitest
+        .spyOn(db, "prepare")
+        .mockImplementation(async (name, callback, options) => {
+          return callback({
+            delete() {
+              throw new Error("transaction error");
+            },
+          } as any);
+        });
 
       await expectAsyncError(
         () => db.saveLastModified(undefined as any),
@@ -506,7 +510,7 @@ describe("adapter.IDB", () => {
         { id: "1", foo: "bar", last_modified: 0 },
         { id: "2", foo: "baz", last_modified: 1 },
       ]);
-      res.should.have.lengthOf(2);
+      expect(res).toHaveLength(2);
     });
 
     it("should override existing records.", async () => {
@@ -519,7 +523,7 @@ describe("adapter.IDB", () => {
         { id: "3", foo: "bab", last_modified: 2 },
       ]);
       const list = await db.list();
-      list.should.deep.equal([
+      expect(list).toStrictEqual([
         { id: "1", foo: "baz", last_modified: 2 },
         { id: "2", foo: "baz", last_modified: 1 },
         { id: "3", foo: "bab", last_modified: 2 },
@@ -532,7 +536,7 @@ describe("adapter.IDB", () => {
         { id: uuid4(), title: "bar", last_modified: 1458796542 },
       ]);
       const lastModified = await db.getLastModified();
-      lastModified.should.equal(1458796542);
+      expect(lastModified).toBe(1458796542);
     });
 
     it("should preserve older collection lastModified value.", async () => {
@@ -542,17 +546,19 @@ describe("adapter.IDB", () => {
         { id: uuid4(), title: "bar", last_modified: 1458796542 },
       ]);
       const lastModified = await db.getLastModified();
-      lastModified.should.equal(1458796543);
+      expect(lastModified).toBe(1458796543);
     });
 
     it("should reject on transaction error", async () => {
-      sandbox.stub(db, "prepare").callsFake(async (name, callback, options) => {
-        return callback({
-          put() {
-            throw new Error("transaction error");
-          },
-        } as any);
-      });
+      vitest
+        .spyOn(db, "prepare")
+        .mockImplementation(async (name, callback, options) => {
+          return callback({
+            put() {
+              throw new Error("transaction error");
+            },
+          } as any);
+        });
 
       await expectAsyncError(
         () => db.importBulk([{ id: "1", last_modified: 0, foo: "bar" }]),
@@ -649,7 +655,7 @@ describe("adapter.IDB", () => {
 
     const cid = "main/tippytop";
 
-    before(async () => {
+    beforeAll(async () => {
       await createOldDB(cid);
       await createOldDB("another/not-migrated");
 
@@ -658,24 +664,24 @@ describe("adapter.IDB", () => {
       });
     });
 
-    after(() => {
-      return idb.close();
+    afterAll(() => {
+      idb.close();
     });
 
     it("should migrate records", async () => {
       const list = await idb.list();
-      list.should.deep.equal([{ id: "1" }, { id: "2" }]);
+      expect(list).toStrictEqual([{ id: "1" }, { id: "2" }]);
     });
 
     it("should migrate timestamps", async () => {
       const lastModified = await idb.getLastModified();
-      lastModified.should.equal(43);
+      expect(lastModified).toBe(43);
     });
 
     it("should create the collections store", async () => {
       const metadata = { id: "abc" };
       await idb.saveMetadata(metadata);
-      (await idb.getMetadata()).should.deep.equal(metadata);
+      expect(await idb.getMetadata()).toStrictEqual(metadata);
     });
 
     it("should not fail if already migrated", async () => {
@@ -706,7 +712,7 @@ describe("adapter.IDB", () => {
     it("should not migrate if option is set to false", async () => {
       const idb = new IDB("another/not-migrated", { migrateOldData: false });
       const list = await idb.list();
-      list.should.deep.equal([]);
+      expect(list).toStrictEqual([]);
     });
 
     it("should not fail if old database is broken or incomplete", async () => {

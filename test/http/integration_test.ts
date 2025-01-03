@@ -1,10 +1,13 @@
-import sinon from "sinon";
-
 import Api from "../../src/http";
 import KintoClientBase, { KintoClientOptions } from "../../src/http/base";
-import { EventEmitter } from "events";
+import mitt from "mitt";
 import KintoServer from "kinto-node-test-server";
-import { delayedPromise, Stub, btoa, expectAsyncError } from "../test_utils";
+import {
+  delayedPromise,
+  btoa,
+  expectAsyncError,
+  fakeBlob,
+} from "../test_utils";
 import Bucket from "../../src/http/bucket";
 import Collection from "../../src/http/collection";
 import {
@@ -16,60 +19,94 @@ import {
   Group,
 } from "../../src/types";
 import { AggregateResponse } from "../../src/http/batch";
+import {
+  beforeAll,
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vitest,
+  Mock,
+} from "vitest";
+import { commands as vitestCommands } from "@vitest/browser/context";
+
+vitestCommands.startServer();
 
 interface TitleRecord extends KintoObject {
   title: string;
 }
 
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, before, after, beforeEach, afterEach } =
-  intern.getPlugin("interface.bdd");
-
-const skipLocalServer = !!process.env.TEST_KINTO_SERVER;
+const skipLocalServer =
+  typeof process !== "undefined" && !!process.env.TEST_KINTO_SERVER;
 const TEST_KINTO_SERVER =
-  process.env.TEST_KINTO_SERVER || "http://0.0.0.0:8888/v1";
-const KINTO_PROXY_SERVER = process.env.KINTO_PROXY_SERVER || TEST_KINTO_SERVER;
+  (typeof process !== "undefined" && process.env.TEST_KINTO_SERVER) ||
+  "http://0.0.0.0:8888/v1";
+const KINTO_PROXY_SERVER =
+  (typeof process !== "undefined" && process.env.KINTO_PROXY_SERVER) ||
+  TEST_KINTO_SERVER;
 
 async function startServer(
   server: KintoServer,
   options: { [key: string]: string } = {}
 ) {
+  if (typeof window !== "undefined") {
+    return vitestCommands.startServer();
+  }
+
   if (!skipLocalServer) {
     await server.start(options);
   }
 }
 
 async function stopServer(server: KintoServer) {
+  if (typeof window !== "undefined") {
+    return vitestCommands.stopServer();
+  }
+
   if (!skipLocalServer) {
     await server.stop();
   }
 }
 
-describe("HTTP Integration tests", function (__test) {
-  let sandbox: sinon.SinonSandbox, server: KintoServer, api: Api;
+describe("HTTP Integration tests", () => {
+  let server: KintoServer, api: Api;
 
-  // Disabling test timeouts until pserve gets decent startup time.
-  __test.timeout = 0;
-
-  before(async () => {
+  beforeAll(async () => {
     if (skipLocalServer) {
       return;
     }
-    let kintoConfigPath = __dirname + "/kinto.ini";
-    if (process.env.SERVER && process.env.SERVER !== "master") {
-      kintoConfigPath = `${__dirname}/kinto-${process.env.SERVER}.ini`;
+
+    if (typeof window == "undefined") {
+      let kintoConfigPath = __dirname + "/kinto.ini";
+      if (process.env.SERVER && process.env.SERVER !== "master") {
+        kintoConfigPath = `${__dirname}/kinto-${process.env.SERVER}.ini`;
+      }
+      server = new KintoServer(KINTO_PROXY_SERVER, {
+        maxAttempts: 200,
+        kintoConfigPath,
+      });
+      await server.loadConfig(kintoConfigPath);
+
+      // need some polyfilling for integration tests to work properly
+      const fetch = require("node-fetch");
+      global.realFetch = global.fetch;
+      global.realHeaders = global.Headers;
+      (global as any).fetch = fetch;
+      (global as any).Headers = fetch.Headers;
     }
-    server = new KintoServer(KINTO_PROXY_SERVER, {
-      maxAttempts: 200,
-      kintoConfigPath,
-    });
-    await server.loadConfig(kintoConfigPath);
   });
 
-  after(() => {
+  afterAll(async () => {
+    if (typeof window !== "undefined") {
+      vitestCommands.startServer();
+      return;
+    }
+
     if (skipLocalServer) {
-      return Promise.resolve();
+      return;
     }
     const logLines = server.logs.toString().split("\n");
     const serverDidCrash = logLines.some((l) => l.startsWith("Traceback"));
@@ -80,36 +117,48 @@ describe("HTTP Integration tests", function (__test) {
         `Kinto server crashed while running the test suite.\n\n${trace}`
       );
     }
-    return server.killAll();
+    server.killAll();
+
+    if (typeof window == "undefined") {
+      // resetting polyfill
+      global.fetch = global.realFetch;
+      global.Headers = global.realHeaders;
+    }
   });
 
   function createClient(options: Partial<KintoClientOptions> = {}) {
     return new Api(TEST_KINTO_SERVER, options);
   }
 
-  beforeEach((__test) => {
-    __test.timeout = 12500;
+  beforeEach(() => {
+    if (typeof window == "undefined") {
+      vitest.spyOn(global, "Blob").mockImplementation(fakeBlob);
+    }
 
-    sandbox = sinon.createSandbox();
-    const events = new EventEmitter();
+    const events = mitt();
     api = createClient({
       events,
       headers: { Authorization: "Basic " + btoa("user:pass") },
     });
   });
 
-  afterEach(() => sandbox.restore());
+  afterEach(() => {
+    vitest.restoreAllMocks();
+  });
 
   describe("Default server configuration", () => {
-    before(async () => {
+    beforeAll(async () => {
       await startServer(server);
     });
 
-    after(async () => {
+    afterAll(async () => {
       await stopServer(server);
     });
 
     beforeEach(async () => {
+      if (typeof window !== "undefined") {
+        return vitestCommands.flushServer();
+      }
       await server.flush();
     });
 
@@ -127,7 +176,7 @@ describe("HTTP Integration tests", function (__test) {
           .bucket("default")
           .collection("posts")
           .listRecords();
-        res.data.should.have.lengthOf(2);
+        expect(res.data).toHaveLength(2);
       });
 
       it("should support bucket batch", async function () {
@@ -141,35 +190,37 @@ describe("HTTP Integration tests", function (__test) {
           .bucket("default")
           .collection("posts")
           .listRecords();
-        res.data.should.have.lengthOf(2);
+        expect(res.data).toHaveLength(2);
       });
     });
 
     describe("Server properties", () => {
       it("should retrieve server settings", async () => {
-        (await api.fetchServerSettings()).should.have
-          .property("batch_max_requests")
-          .eql(25);
+        expect(await api.fetchServerSettings()).toHaveProperty(
+          "batch_max_requests",
+          25
+        );
       });
 
       it("should retrieve server capabilities", async () => {
         const capabilities = await api.fetchServerCapabilities();
-        expect(capabilities).to.be.an("object");
+        expectTypeOf(capabilities).toBeObject();
         // Kinto protocol 1.4 exposes capability descriptions
         Object.keys(capabilities).forEach((capability) => {
           const capabilityObj = capabilities[capability];
-          expect(capabilityObj).to.include.keys("url", "description");
+          expect(capabilityObj).toHaveProperty("url");
+          expect(capabilityObj).toHaveProperty("description");
         });
       });
 
       it("should retrieve user information", async () => {
         const user = await api.fetchUser();
-        expect(user!.id).to.match(/^basicauth:/);
-        expect(user!.bucket).to.have.lengthOf(36);
+        expect(user!.id).toMatch(/^basicauth:/);
+        expect(user!.bucket).toHaveLength(36);
       });
 
       it("should retrieve current API version", async () => {
-        (await api.fetchHTTPApiVersion()).should.match(/^\d\.\d+$/);
+        expect(await api.fetchHTTPApiVersion()).toMatch(/^\d\.\d+$/);
       });
     });
 
@@ -179,44 +230,33 @@ describe("HTTP Integration tests", function (__test) {
       describe("Default options", () => {
         describe("Autogenerated id", () => {
           beforeEach(async () => {
-            const res = await api.createBucket(null);
-            return (result = res as KintoResponse);
+            result = await api.createBucket(null);
           });
 
           it("should create a bucket", () => {
-            expect(result)
-              .to.have.property("data")
-              .to.have.property("id")
-              .to.be.a("string");
+            expectTypeOf(result.data.id).toBeString();
           });
         });
 
         describe("Custom id", () => {
           beforeEach(async () => {
-            const res = await api.createBucket("foo");
-            return (result = res as KintoResponse);
+            result = await api.createBucket("foo");
           });
 
           it("should create a bucket with the passed id", () => {
-            expect(result)
-              .to.have.property("data")
-              .to.have.property("id")
-              .eql("foo");
+            expect(result).toHaveProperty("data.id", "foo");
           });
 
           it("should create a bucket having a list of write permissions", () => {
-            expect(result)
-              .to.have.property("permissions")
-              .to.have.property("write")
-              .to.be.a("array");
+            expect(result).toHaveProperty("permissions.write");
+            expectTypeOf(result.permissions.write).toBeArray();
           });
 
           describe("data option", () => {
             it("should create bucket data", async () => {
-              (await api.createBucket("foo", { data: { a: 1 } })).should.have
-                .property("data")
-                .to.have.property("a")
-                .eql(1);
+              expect(
+                await api.createBucket("foo", { data: { a: 1 } })
+              ).toHaveProperty("data.a", 1);
             });
           });
 
@@ -232,18 +272,12 @@ describe("HTTP Integration tests", function (__test) {
       });
 
       describe("permissions option", () => {
-        beforeEach(async () => {
-          const res = await api.createBucket("foo", {
+        it("should create a bucket having a list of write permissions", async () => {
+          const result = await api.createBucket("foo", {
             permissions: { read: ["github:n1k0"] },
           });
-          return (result = res as KintoResponse);
-        });
 
-        it("should create a bucket having a list of write permissions", () => {
-          expect(result)
-            .to.have.property("permissions")
-            .to.have.property("read")
-            .to.eql(["github:n1k0"]);
+          expect(result).toHaveProperty("permissions.read", ["github:n1k0"]);
         });
       });
     });
@@ -253,13 +287,13 @@ describe("HTTP Integration tests", function (__test) {
 
       beforeEach(async () => {
         const res = await api.createBucket("foo");
-        return (last_modified = (res as KintoResponse).data.last_modified);
+        last_modified = res.data.last_modified;
       });
 
       it("should delete a bucket", async () => {
         await api.deleteBucket("foo");
         const { data } = await api.listBuckets();
-        data.map((bucket) => bucket.id).should.not.include("foo");
+        expect(data.map((bucket) => bucket.id)).not.include("foo");
       });
 
       describe("Safe option", () => {
@@ -277,8 +311,8 @@ describe("HTTP Integration tests", function (__test) {
     });
 
     describe("#deleteBuckets()", () => {
-      beforeEach(() => {
-        return api.batch((batch: KintoClientBase) => {
+      beforeEach(async () => {
+        await api.batch((batch: KintoClientBase) => {
           batch.createBucket("b1");
           batch.createBucket("b2");
         });
@@ -288,27 +322,14 @@ describe("HTTP Integration tests", function (__test) {
         await api.deleteBuckets();
         await delayedPromise(50);
         const { data } = await api.listBuckets();
-        data.should.deep.equal([]);
+        expect(data).toStrictEqual([]);
       });
     });
 
     describe("#listPermissions", () => {
-      // FIXME: this feature was introduced between 8.2 and 8.3, and
-      // these tests run against master as well as an older Kinto
-      // version (see .travis.yml). If we ever bump the older version
-      // up to one where it also has bucket:create, we can clean this
-      // up.
-      const shouldHaveCreatePermission =
-        // People developing don't always set SERVER. Let's assume
-        // that means "master".
-        !process.env.SERVER ||
-        // "master" is greater than 8.3 but let's just be explicit here.
-        process.env.SERVER == "master" ||
-        process.env.SERVER > "8.3" ||
-        (process.env.SERVER > "8.2" && process.env.SERVER.includes("dev"));
       describe("Single page of permissions", () => {
-        beforeEach(() => {
-          return api.batch((batch: KintoClientBase) => {
+        beforeEach(async () => {
+          await api.batch((batch: KintoClientBase) => {
             batch.createBucket("b1");
             batch.bucket("b1").createCollection("c1");
           });
@@ -316,24 +337,22 @@ describe("HTTP Integration tests", function (__test) {
 
         it("should retrieve the list of permissions", async () => {
           let { data } = await api.listPermissions();
-          if (shouldHaveCreatePermission) {
-            // One element is for the root element which has
-            // `bucket:create` as well as `account:create`. Remove
-            // it.
-            const isBucketCreate = (p_1: PermissionData) =>
-              p_1.permissions.includes("bucket:create");
-            const bucketCreate = data.filter(isBucketCreate);
-            expect(bucketCreate.length).eql(1);
-            data = data.filter((p_2) => !isBucketCreate(p_2));
-          }
+          // One element is for the root element which has
+          // `bucket:create` as well as `account:create`. Remove
+          // it.
+          const isBucketCreate = (p_1: PermissionData) =>
+            p_1.permissions.includes("bucket:create");
+          const bucketCreate = data.filter(isBucketCreate);
+          expect(bucketCreate.length).eql(1);
+          data = data.filter((p_2) => !isBucketCreate(p_2));
           expect(data).to.have.lengthOf(2);
           expect(data.map((p_3) => p_3.id).sort()).eql(["b1", "c1"]);
         });
       });
 
       describe("Paginated list of permissions", () => {
-        beforeEach(() => {
-          return api.batch((batch: KintoClientBase) => {
+        beforeEach(async () => {
+          await api.batch((batch: KintoClientBase) => {
             for (let i = 1; i <= 15; i++) {
               batch.createBucket("b" + i);
             }
@@ -343,17 +362,15 @@ describe("HTTP Integration tests", function (__test) {
         it("should retrieve the list of permissions", async () => {
           const results = await api.listPermissions({ pages: Infinity });
           let expectedRecords = 15;
-          if (shouldHaveCreatePermission) {
-            expectedRecords++;
-          }
+          expectedRecords++;
           expect(results.data).to.have.lengthOf(expectedRecords);
         });
       });
     });
 
     describe("#listBuckets", () => {
-      beforeEach(() => {
-        return api.batch((batch: KintoClientBase) => {
+      beforeEach(async () => {
+        await api.batch((batch: KintoClientBase) => {
           batch.createBucket("b1", { data: { size: 24 } });
           batch.createBucket("b2", { data: { size: 13 } });
           batch.createBucket("b3", { data: { size: 38 } });
@@ -363,17 +380,22 @@ describe("HTTP Integration tests", function (__test) {
 
       it("should retrieve the list of buckets", async () => {
         const { data } = await api.listBuckets();
-        data
-          .map((bucket) => bucket.id)
-          .sort()
-          .should.deep.equal(["b1", "b2", "b3", "b4"]);
+        expect(data.map((bucket) => bucket.id).sort()).toStrictEqual([
+          "b1",
+          "b2",
+          "b3",
+          "b4",
+        ]);
       });
 
       it("should order buckets by field", async () => {
         const { data } = await api.listBuckets({ sort: "-size" });
-        data
-          .map((bucket) => bucket.id)
-          .should.deep.equal(["b3", "b1", "b2", "b4"]);
+        expect(data.map((bucket) => bucket.id)).toStrictEqual([
+          "b3",
+          "b1",
+          "b2",
+          "b4",
+        ]);
       });
 
       describe("Filtering", () => {
@@ -382,47 +404,49 @@ describe("HTTP Integration tests", function (__test) {
             sort: "size",
             filters: { min_size: 20 },
           });
-          data.map((bucket) => bucket.id).should.deep.equal(["b1", "b3"]);
+          expect(data.map((bucket) => bucket.id)).toStrictEqual(["b1", "b3"]);
         });
 
         it("should resolve with buckets last_modified value", async () => {
-          (await api.listBuckets()).should.have
-            .property("last_modified")
-            .to.be.a("string");
+          expectTypeOf((await api.listBuckets()).last_modified).toBeString();
         });
 
         it("should retrieve only buckets after provided timestamp", async () => {
           const timestamp = (await api.listBuckets()).last_modified!;
           await api.createBucket("b5");
-          (await api.listBuckets({ since: timestamp })).should.have
-            .property("data")
-            .to.have.lengthOf(1);
+          expect(
+            (await api.listBuckets({ since: timestamp })).data
+          ).toHaveLength(1);
         });
       });
 
       describe("Pagination", () => {
         it("should not paginate by default", async () => {
           const { data } = await api.listBuckets();
-          data
-            .map((bucket) => bucket.id)
-            .should.deep.equal(["b4", "b3", "b2", "b1"]);
+          expect(data.map((bucket) => bucket.id)).toStrictEqual([
+            "b4",
+            "b3",
+            "b2",
+            "b1",
+          ]);
         });
 
         it("should paginate by chunks", async () => {
           const { data } = await api.listBuckets({ limit: 2 });
-          data.map((bucket) => bucket.id).should.deep.equal(["b4", "b3"]);
+          expect(data.map((bucket) => bucket.id)).toStrictEqual(["b4", "b3"]);
         });
 
         it("should expose a hasNextPage boolean prop", async () => {
-          (await api.listBuckets({ limit: 2 })).should.have
-            .property("hasNextPage")
-            .eql(true);
+          expect(await api.listBuckets({ limit: 2 })).toHaveProperty(
+            "hasNextPage",
+            true
+          );
         });
 
         it("should provide a next method to load next page", async () => {
           const res = await api.listBuckets({ limit: 2 });
           const { data } = await res.next();
-          data.map((bucket) => bucket.id).should.deep.equal(["b2", "b1"]);
+          expect(data.map((bucket) => bucket.id)).toStrictEqual(["b2", "b1"]);
         });
       });
     });
@@ -453,9 +477,10 @@ describe("HTTP Integration tests", function (__test) {
             .bucket("custom")
             .collection("blog")
             .listRecords<TitleRecord>();
-          data
-            .map((record) => record.title)
-            .should.deep.equal(["art2", "art1"]);
+          expect(data.map((record) => record.title)).toStrictEqual([
+            "art2",
+            "art1",
+          ]);
         });
       });
 
@@ -472,11 +497,9 @@ describe("HTTP Integration tests", function (__test) {
             }
           });
 
-          (
-            await api.bucket("custom").collection("blog").listRecords()
-          ).should.have
-            .property("data")
-            .to.have.lengthOf(10);
+          expect(
+            (await api.bucket("custom").collection("blog").listRecords()).data
+          ).toHaveLength(10);
         });
       });
 
@@ -486,7 +509,7 @@ describe("HTTP Integration tests", function (__test) {
             let results: AggregateResponse;
 
             beforeEach(async () => {
-              const _results = await api.batch(
+              results = (await api.batch(
                 (batch: KintoClientBase) => {
                   batch.createBucket("custom");
                   const bucket = batch.bucket("custom");
@@ -496,8 +519,7 @@ describe("HTTP Integration tests", function (__test) {
                   coll.createRecord({ title: "art2" });
                 },
                 { aggregate: true }
-              );
-              return (results = _results as AggregateResponse);
+              )) as AggregateResponse;
             });
 
             it("should return an aggregated result object", () => {
@@ -510,9 +532,9 @@ describe("HTTP Integration tests", function (__test) {
             });
 
             it("should contain the list of succesful publications", () => {
-              expect(
-                results.published.map((body) => body.data)
-              ).to.have.lengthOf(4);
+              expect(results.published.map((body) => body.data)).toHaveLength(
+                4
+              );
             });
           });
 
@@ -520,7 +542,7 @@ describe("HTTP Integration tests", function (__test) {
             let results: AggregateResponse;
 
             beforeEach(async () => {
-              const _results = await api
+              results = (await api
                 .bucket("default")
                 .collection("blog")
                 .batch(
@@ -530,21 +552,18 @@ describe("HTTP Integration tests", function (__test) {
                     }
                   },
                   { aggregate: true }
-                );
-              return (results = _results as AggregateResponse);
+                )) as AggregateResponse;
             });
 
             it("should return an aggregated result object", () => {
-              expect(results).to.include.keys([
-                "errors",
-                "conflicts",
-                "published",
-                "skipped",
-              ]);
+              expect(results).toHaveProperty("errors");
+              expect(results).toHaveProperty("conflicts");
+              expect(results).toHaveProperty("published");
+              expect(results).toHaveProperty("skipped");
             });
 
             it("should contain the list of succesful publications", () => {
-              expect(results.published).to.have.lengthOf(26);
+              expect(results.published).toHaveLength(26);
             });
           });
         });
@@ -555,56 +574,61 @@ describe("HTTP Integration tests", function (__test) {
   describe("Backed off server", () => {
     const backoffSeconds = 10;
 
-    before(async () => {
+    beforeAll(async () => {
       await startServer(server, { KINTO_BACKOFF: backoffSeconds.toString() });
     });
 
-    after(async () => {
+    afterAll(async () => {
       await stopServer(server);
     });
 
     beforeEach(async () => {
+      if (typeof window !== "undefined") {
+        return vitestCommands.flushServer();
+      }
       await server.flush();
     });
 
     it("should appropriately populate the backoff property", async () => {
       // Issuing a first api call to retrieve backoff information
       await api.listBuckets();
-      return expect(Math.round(api.backoff / 1000)).eql(backoffSeconds);
+      expect(Math.round(api.backoff / 1000)).eql(backoffSeconds);
     });
   });
 
   describe("Deprecated protocol version", () => {
     beforeEach(async () => {
+      if (typeof window !== "undefined") {
+        return vitestCommands.flushServer();
+      }
       await server.flush();
     });
 
     describe("Soft EOL", () => {
-      let consoleWarnStub: Stub<typeof console.warn>;
+      let consoleWarnStub: Mock;
 
-      before(() => {
+      beforeAll(async () => {
         const tomorrow = new Date(new Date().getTime() + 86400000)
           .toJSON()
           .slice(0, 10);
-        return startServer(server, {
+        await startServer(server, {
           KINTO_EOS: `"${tomorrow}"`,
           KINTO_EOS_URL: "http://www.perdu.com",
           KINTO_EOS_MESSAGE: "Boom",
         });
       });
 
-      after(async () => {
+      afterAll(async () => {
         await stopServer(server);
       });
 
       beforeEach(() => {
-        consoleWarnStub = sandbox.stub(console, "warn");
+        consoleWarnStub = vitest.spyOn(console, "warn");
       });
 
       it("should warn when the server sends a deprecation Alert header", async () => {
         await api.fetchServerSettings();
-        sinon.assert.calledWithExactly(
-          consoleWarnStub,
+        expect(consoleWarnStub).toHaveBeenCalledWith(
           "Boom",
           "http://www.perdu.com"
         );
@@ -612,21 +636,21 @@ describe("HTTP Integration tests", function (__test) {
     });
 
     describe("Hard EOL", () => {
-      before(() => {
+      beforeAll(async () => {
         const lastWeek = new Date(new Date().getTime() - 7 * 86400000)
           .toJSON()
           .slice(0, 10);
-        return startServer(server, {
+        startServer(server, {
           KINTO_EOS: `"${lastWeek}"`,
           KINTO_EOS_URL: "http://www.perdu.com",
           KINTO_EOS_MESSAGE: "Boom",
         });
       });
 
-      after(() => stopServer(server));
+      afterAll(() => stopServer(server));
 
       beforeEach(() => {
-        sandbox.stub(console, "warn");
+        vitest.spyOn(console, "warn");
       });
 
       it("should reject with a 410 Gone when hard EOL is received", async () => {
@@ -642,20 +666,27 @@ describe("HTTP Integration tests", function (__test) {
   });
 
   describe("Limited pagination", () => {
-    before(() => {
-      return startServer(server, { KINTO_PAGINATE_BY: "1" });
+    beforeAll(async () => {
+      await startServer(server, { KINTO_PAGINATE_BY: "1" });
     });
 
-    after(() => stopServer(server));
+    afterAll(async () => {
+      await stopServer(server);
+    });
 
-    beforeEach(() => server.flush());
+    beforeEach(async () => {
+      if (typeof window !== "undefined") {
+        return vitestCommands.flushServer();
+      }
+      await server.flush();
+    });
 
     describe("Limited configured server pagination", () => {
       let collection: Collection;
 
-      beforeEach(() => {
+      beforeEach(async () => {
         collection = api.bucket("default").collection("posts");
-        return collection.batch((batch) => {
+        await collection.batch((batch) => {
           batch.createRecord({ n: 1 });
           batch.createRecord({ n: 2 });
         });
@@ -663,22 +694,32 @@ describe("HTTP Integration tests", function (__test) {
 
       it("should fetch one results page", async () => {
         const { data } = await collection.listRecords();
-        data.map((record) => record.id).should.have.lengthOf(1);
+        expect(data.map((record) => record.id)).toHaveLength(1);
       });
 
       it("should fetch all available pages", async () => {
         const { data } = await collection.listRecords({ pages: Infinity });
-        data.map((record) => record.id).should.have.lengthOf(2);
+        expect(data.map((record) => record.id)).toHaveLength(2);
       });
     });
   });
 
   describe("Chainable API", () => {
-    before(() => startServer(server));
+    beforeAll(async () => {
+      await startServer(server);
+    });
 
-    after(() => stopServer(server));
+    afterAll(async () => {
+      await stopServer(server);
+    });
 
-    beforeEach(() => server.flush());
+    beforeEach(async () => {
+      if (typeof window !== "undefined") {
+        await vitestCommands.flushServer();
+        return;
+      }
+      await server.flush();
+    });
 
     describe(".bucket()", () => {
       let bucket: Bucket;
@@ -686,7 +727,7 @@ describe("HTTP Integration tests", function (__test) {
       beforeEach(async () => {
         bucket = api.bucket("custom");
         await api.createBucket("custom");
-        return await bucket.batch((batch) => {
+        await bucket.batch((batch) => {
           batch.createCollection("c1", { data: { size: 24 } });
           batch.createCollection("c2", { data: { size: 13 } });
           batch.createCollection("c3", { data: { size: 38 } });
@@ -702,28 +743,27 @@ describe("HTTP Integration tests", function (__test) {
         let result: KintoObject;
 
         beforeEach(async () => {
-          const res = await bucket.getData<KintoObject>();
-          return (result = res);
+          result = await bucket.getData<KintoObject>();
         });
 
         it("should retrieve the bucket identifier", () => {
-          expect(result).to.have.property("id").eql("custom");
+          expect(result).toHaveProperty("id", "custom");
         });
 
         it("should retrieve bucket last_modified value", () => {
-          expect(result).to.have.property("last_modified").to.be.gt(1);
+          expect(result.last_modified).toBeGreaterThan(1);
         });
       });
 
       describe(".setData()", () => {
-        beforeEach(() => {
-          return bucket.setPermissions({ read: ["github:jon"] });
+        beforeEach(async () => {
+          await bucket.setPermissions({ read: ["github:jon"] });
         });
 
         it("should post data to the bucket", async () => {
           const res = await bucket.setData({ a: 1 });
           expect((res as KintoResponse).data.a).eql(1);
-          expect((res as KintoResponse).permissions.read).to.include(
+          expect((res as KintoResponse).permissions.read).includes(
             "github:jon"
           );
         });
@@ -733,28 +773,26 @@ describe("HTTP Integration tests", function (__test) {
           const res = await bucket.setData({ b: 2 }, { patch: true });
           expect((res as KintoResponse).data.a).eql(1);
           expect((res as KintoResponse).data.b).eql(2);
-          expect((res as KintoResponse).permissions.read).to.include(
+          expect((res as KintoResponse).permissions.read).includes(
             "github:jon"
           );
         });
 
         it("should post data to the default bucket", async () => {
           const { data } = await api.bucket("default").setData({ a: 1 });
-          data.should.have.property("a").eql(1);
+          expect(data).toHaveProperty("a", 1);
         });
       });
 
       describe(".getPermissions()", () => {
         it("should retrieve bucket permissions", async () => {
-          (await bucket.getPermissions()).should.have
-            .property("write")
-            .to.have.lengthOf(1);
+          expect((await bucket.getPermissions()).write).toHaveLength(1);
         });
       });
 
       describe(".setPermissions()", () => {
-        beforeEach(() => {
-          return bucket.setData({ a: 1 });
+        beforeEach(async () => {
+          await bucket.setData({ a: 1 });
         });
 
         it("should set bucket permissions", async () => {
@@ -780,7 +818,7 @@ describe("HTTP Integration tests", function (__test) {
       describe(".addPermissions()", () => {
         beforeEach(async () => {
           await bucket.setPermissions({ read: ["github:n1k0"] });
-          return await bucket.setData({ a: 1 });
+          await bucket.setData({ a: 1 });
         });
 
         it("should append bucket permissions", async () => {
@@ -796,49 +834,45 @@ describe("HTTP Integration tests", function (__test) {
       describe(".removePermissions()", () => {
         beforeEach(async () => {
           await bucket.setPermissions({ read: ["github:n1k0"] });
-          return await bucket.setData({ a: 1 });
+          await bucket.setData({ a: 1 });
         });
 
         it("should pop bucket permissions", async () => {
           const res = await bucket.removePermissions({ read: ["github:n1k0"] });
           expect((res as KintoResponse).data.a).eql(1);
-          expect((res as KintoResponse).permissions.read).eql(undefined);
+          expect((res as KintoResponse).permissions.read).toBeUndefined();
         });
       });
 
       describe(".listHistory()", () => {
         it("should retrieve the list of history entries", async () => {
           const { data } = await bucket.listHistory();
-          data
-            .map((entry) => entry.target.data.id)
-            .should.deep.equal([
-              "g4",
-              "g3",
-              "g2",
-              "g1",
-              "c4",
-              "c3",
-              "c2",
-              "c1",
-              "custom",
-            ]);
+          expect(data.map((entry) => entry.target.data.id)).toStrictEqual([
+            "g4",
+            "g3",
+            "g2",
+            "g1",
+            "c4",
+            "c3",
+            "c2",
+            "c1",
+            "custom",
+          ]);
         });
 
         it("should order entries by field", async () => {
           const { data } = await bucket.listHistory({ sort: "last_modified" });
-          data
-            .map((entry) => entry.target.data.id)
-            .should.deep.equal([
-              "custom",
-              "c1",
-              "c2",
-              "c3",
-              "c4",
-              "g1",
-              "g2",
-              "g3",
-              "g4",
-            ]);
+          expect(data.map((entry) => entry.target.data.id)).toStrictEqual([
+            "custom",
+            "c1",
+            "c2",
+            "c3",
+            "c4",
+            "g1",
+            "g2",
+            "g3",
+            "g4",
+          ]);
         });
 
         describe("Filtering", () => {
@@ -846,54 +880,56 @@ describe("HTTP Integration tests", function (__test) {
             const { data } = await bucket.listHistory({
               filters: { resource_name: "bucket" },
             });
-            data
-              .map((entry) => entry.target.data.id)
-              .should.deep.equal(["custom"]);
+            expect(data.map((entry) => entry.target.data.id)).toStrictEqual([
+              "custom",
+            ]);
           });
 
           it("should filter entries by target attributes", async () => {
             const { data } = await bucket.listHistory({
               filters: { "target.data.id": "custom" },
             });
-            data
-              .map((entry) => entry.target.data.id)
-              .should.deep.equal(["custom"]);
+            expect(data.map((entry) => entry.target.data.id)).toStrictEqual([
+              "custom",
+            ]);
           });
 
           it("should resolve with entries last_modified value", async () => {
-            (await bucket.listHistory()).should.have
-              .property("last_modified")
-              .to.be.a("string");
+            expectTypeOf(
+              (await bucket.listHistory()).last_modified
+            ).toBeString();
           });
 
           it("should retrieve only entries after provided timestamp", async () => {
             const timestamp = (await bucket.listHistory()).last_modified!;
             await bucket.createCollection("c5");
-            (await bucket.listHistory({ since: timestamp })).should.have
-              .property("data")
-              .to.have.lengthOf(1);
+            expect(
+              (await bucket.listHistory({ since: timestamp })).data
+            ).toHaveLength(1);
           });
         });
 
         describe("Pagination", () => {
           it("should not paginate by default", async () => {
             const { data } = await bucket.listHistory();
-            data.map((entry) => entry.target.data.id).should.have.lengthOf(9);
+            expect(data.map((entry) => entry.target.data.id)).toHaveLength(9);
           });
 
           it("should paginate by chunks", async () => {
             const { data } = await bucket.listHistory({ limit: 2 });
-            data
-              .map((entry) => entry.target.data.id)
-              .should.deep.equal(["g4", "g3"]);
+            expect(data.map((entry) => entry.target.data.id)).toStrictEqual([
+              "g4",
+              "g3",
+            ]);
           });
 
           it("should provide a next method to load next page", async () => {
             const res = await bucket.listHistory({ limit: 2 });
             const { data } = await res.next();
-            data
-              .map((entry) => entry.target.data.id)
-              .should.deep.equal(["g2", "g1"]);
+            expect(data.map((entry) => entry.target.data.id)).toStrictEqual([
+              "g2",
+              "g1",
+            ]);
           });
         });
       });
@@ -901,26 +937,34 @@ describe("HTTP Integration tests", function (__test) {
       describe(".listCollections()", () => {
         it("should retrieve the list of collections", async () => {
           const { data } = await bucket.listCollections();
-          data
-            .map((collection) => collection.id)
-            .sort()
-            .should.deep.equal(["c1", "c2", "c3", "c4"]);
+          expect(data.map((collection) => collection.id).sort()).toStrictEqual([
+            "c1",
+            "c2",
+            "c3",
+            "c4",
+          ]);
         });
 
         it("should order collections by field", async () => {
           const { data } = await bucket.listCollections({ sort: "-size" });
-          data
-            .map((collection) => collection.id)
-            .should.deep.equal(["c3", "c1", "c2", "c4"]);
+          expect(data.map((collection) => collection.id)).toStrictEqual([
+            "c3",
+            "c1",
+            "c2",
+            "c4",
+          ]);
         });
 
         it("should work in a batch", async () => {
           const res = (await api.batch((batch: KintoClientBase) => {
             batch.bucket("custom").listCollections();
           })) as unknown as OperationResponse<KintoObject[]>[];
-          res[0].body.data
-            .map((r) => r.id)
-            .should.deep.equal(["c4", "c3", "c2", "c1"]);
+          expect(res[0].body.data.map((r) => r.id)).toStrictEqual([
+            "c4",
+            "c3",
+            "c2",
+            "c1",
+          ]);
         });
 
         describe("Filtering", () => {
@@ -929,47 +973,53 @@ describe("HTTP Integration tests", function (__test) {
               sort: "size",
               filters: { min_size: 20 },
             });
-            data
-              .map((collection) => collection.id)
-              .should.deep.equal(["c1", "c3"]);
+            expect(data.map((collection) => collection.id)).toStrictEqual([
+              "c1",
+              "c3",
+            ]);
           });
 
           it("should resolve with collections last_modified value", async () => {
-            (await bucket.listCollections()).should.have
-              .property("last_modified")
-              .to.be.a("string");
+            expectTypeOf(
+              (await bucket.listCollections()).last_modified
+            ).toBeString();
           });
 
           it("should retrieve only collections after provided timestamp", async () => {
             const timestamp = (await bucket.listCollections()).last_modified!;
             await bucket.createCollection("c5");
-            (await bucket.listCollections({ since: timestamp })).should.have
-              .property("data")
-              .to.have.lengthOf(1);
+            expect(
+              (await bucket.listCollections({ since: timestamp })).data
+            ).toHaveLength(1);
           });
         });
 
         describe("Pagination", () => {
           it("should not paginate by default", async () => {
             const { data } = await bucket.listCollections();
-            data
-              .map((collection) => collection.id)
-              .should.deep.equal(["c4", "c3", "c2", "c1"]);
+            expect(data.map((collection) => collection.id)).toStrictEqual([
+              "c4",
+              "c3",
+              "c2",
+              "c1",
+            ]);
           });
 
           it("should paginate by chunks", async () => {
             const { data } = await bucket.listCollections({ limit: 2 });
-            data
-              .map((collection) => collection.id)
-              .should.deep.equal(["c4", "c3"]);
+            expect(data.map((collection) => collection.id)).toStrictEqual([
+              "c4",
+              "c3",
+            ]);
           });
 
           it("should provide a next method to load next page", async () => {
             const res = await bucket.listCollections({ limit: 2 });
             const { data } = await res.next();
-            data
-              .map((collection) => collection.id)
-              .should.deep.equal(["c2", "c1"]);
+            expect(data.map((collection) => collection.id)).toStrictEqual([
+              "c2",
+              "c1",
+            ]);
           });
         });
       });
@@ -978,14 +1028,14 @@ describe("HTTP Integration tests", function (__test) {
         it("should create a named collection", async () => {
           await bucket.createCollection("foo");
           const { data } = await bucket.listCollections();
-          data.map((coll) => coll.id).should.include("foo");
+          expect(data.map((coll) => coll.id)).includes("foo");
         });
 
         it("should create an automatically named collection", async () => {
           const res = await bucket.createCollection();
           const generated = (res as KintoResponse).data.id;
           const { data } = await bucket.listCollections();
-          return expect(data.some((x) => x.id === generated)).eql(true);
+          expect(data.some((x) => x.id === generated)).eql(true);
         });
 
         describe("Safe option", () => {
@@ -1003,19 +1053,15 @@ describe("HTTP Integration tests", function (__test) {
           let result: KintoResponse;
 
           beforeEach(async () => {
-            const res = await bucket.createCollection("posts", {
+            result = await bucket.createCollection("posts", {
               permissions: {
                 read: ["github:n1k0"],
               },
             });
-            return (result = res as KintoResponse);
           });
 
           it("should create a collection having a list of write permissions", () => {
-            expect(result)
-              .to.have.property("permissions")
-              .to.have.property("read")
-              .to.eql(["github:n1k0"]);
+            expect(result).toHaveProperty("permissions.read", ["github:n1k0"]);
           });
         });
 
@@ -1023,17 +1069,13 @@ describe("HTTP Integration tests", function (__test) {
           let result: KintoResponse;
 
           beforeEach(async () => {
-            const res = await bucket.createCollection("posts", {
+            result = await bucket.createCollection("posts", {
               data: { foo: "bar" },
             });
-            return (result = res as KintoResponse);
           });
 
           it("should create a collection having the expected data attached", () => {
-            expect(result)
-              .to.have.property("data")
-              .to.have.property("foo")
-              .eql("bar");
+            expect(result).toHaveProperty("data.foo", "bar");
           });
         });
       });
@@ -1043,7 +1085,7 @@ describe("HTTP Integration tests", function (__test) {
           await bucket.createCollection("foo");
           await bucket.deleteCollection("foo");
           const { data } = await bucket.listCollections();
-          data.map((coll) => coll.id).should.not.include("foo");
+          expect(data.map((coll) => coll.id)).not.includes("foo");
         });
 
         describe("Safe option", () => {
@@ -1065,17 +1107,22 @@ describe("HTTP Integration tests", function (__test) {
       describe(".listGroups()", () => {
         it("should retrieve the list of groups", async () => {
           const { data } = await bucket.listGroups();
-          data
-            .map((group) => group.id)
-            .sort()
-            .should.deep.equal(["g1", "g2", "g3", "g4"]);
+          expect(data.map((group) => group.id).sort()).toStrictEqual([
+            "g1",
+            "g2",
+            "g3",
+            "g4",
+          ]);
         });
 
         it("should order groups by field", async () => {
           const { data } = await bucket.listGroups({ sort: "-size" });
-          data
-            .map((group) => group.id)
-            .should.deep.equal(["g3", "g1", "g2", "g4"]);
+          expect(data.map((group) => group.id)).toStrictEqual([
+            "g3",
+            "g1",
+            "g2",
+            "g4",
+          ]);
         });
 
         describe("Filtering", () => {
@@ -1084,41 +1131,44 @@ describe("HTTP Integration tests", function (__test) {
               sort: "size",
               filters: { min_size: 20 },
             });
-            data.map((group) => group.id).should.deep.equal(["g1", "g3"]);
+            expect(data.map((group) => group.id)).toStrictEqual(["g1", "g3"]);
           });
 
           it("should resolve with groups last_modified value", async () => {
-            (await bucket.listGroups()).should.have
-              .property("last_modified")
-              .to.be.a("string");
+            expectTypeOf(
+              (await bucket.listGroups()).last_modified
+            ).toBeString();
           });
 
           it("should retrieve only groups after provided timestamp", async () => {
             const timestamp = (await bucket.listGroups()).last_modified!;
             await bucket.createGroup("g5", []);
-            (await bucket.listGroups({ since: timestamp })).should.have
-              .property("data")
-              .to.have.lengthOf(1);
+            expect(
+              (await bucket.listGroups({ since: timestamp })).data
+            ).toHaveLength(1);
           });
         });
 
         describe("Pagination", () => {
           it("should not paginate by default", async () => {
             const { data } = await bucket.listGroups();
-            data
-              .map((group) => group.id)
-              .should.deep.equal(["g4", "g3", "g2", "g1"]);
+            expect(data.map((group) => group.id)).toStrictEqual([
+              "g4",
+              "g3",
+              "g2",
+              "g1",
+            ]);
           });
 
           it("should paginate by chunks", async () => {
             const { data } = await bucket.listGroups({ limit: 2 });
-            data.map((group) => group.id).should.deep.equal(["g4", "g3"]);
+            expect(data.map((group) => group.id)).toStrictEqual(["g4", "g3"]);
           });
 
           it("should provide a next method to load next page", async () => {
             const res = await bucket.listGroups({ limit: 2 });
             const { data } = await res.next();
-            data.map((group) => group.id).should.deep.equal(["g2", "g1"]);
+            expect(data.map((group) => group.id)).toStrictEqual(["g2", "g1"]);
           });
         });
       });
@@ -1127,14 +1177,14 @@ describe("HTTP Integration tests", function (__test) {
         it("should create a named group", async () => {
           await bucket.createGroup("foo");
           const { data } = await bucket.listGroups();
-          data.map((group) => group.id).should.include("foo");
+          expect(data.map((group) => group.id)).includes("foo");
         });
 
         it("should create an automatically named group", async () => {
           const res = await bucket.createGroup();
           const generated = (res as KintoResponse<Group>).data.id;
           const { data } = await bucket.listGroups();
-          return expect(data.some((x) => x.id === generated)).eql(true);
+          expect(data.some((x) => x.id === generated)).eql(true);
         });
 
         describe("Safe option", () => {
@@ -1152,16 +1202,11 @@ describe("HTTP Integration tests", function (__test) {
           let result: KintoResponse<Group>;
 
           beforeEach(async () => {
-            const res = await bucket.createGroup(
-              "admins",
-              ["twitter:leplatrem"],
-              {
-                permissions: {
-                  read: ["github:n1k0"],
-                },
-              }
-            );
-            return (result = res as KintoResponse<Group>);
+            result = await bucket.createGroup("admins", ["twitter:leplatrem"], {
+              permissions: {
+                read: ["github:n1k0"],
+              },
+            });
           });
 
           it("should create a collection having a list of write permissions", () => {
@@ -1177,22 +1222,14 @@ describe("HTTP Integration tests", function (__test) {
           let result: KintoResponse<Group>;
 
           beforeEach(async () => {
-            const res = await bucket.createGroup(
-              "admins",
-              ["twitter:leplatrem"],
-              {
-                data: { foo: "bar" },
-              }
-            );
-            return (result = res as KintoResponse<Group>);
+            result = await bucket.createGroup("admins", ["twitter:leplatrem"], {
+              data: { foo: "bar" },
+            });
           });
 
           it("should create a collection having the expected data attached", () => {
-            expect(result)
-              .to.have.property("data")
-              .to.have.property("foo")
-              .eql("bar");
-            expect(result.data.members).to.include("twitter:leplatrem");
+            expect(result).toHaveProperty("data.foo", "bar");
+            expect(result.data.members).includes("twitter:leplatrem");
           });
         });
       });
@@ -1203,9 +1240,9 @@ describe("HTTP Integration tests", function (__test) {
           const res = await bucket.getGroup("foo");
           expect((res as KintoResponse<Group>).data.id).eql("foo");
           expect((res as KintoResponse<Group>).data.members).eql([]);
-          expect(
-            (res as KintoResponse<Group>).permissions.write
-          ).to.have.lengthOf(1);
+          expect((res as KintoResponse<Group>).permissions.write).toHaveLength(
+            1
+          );
         });
       });
 
@@ -1218,7 +1255,7 @@ describe("HTTP Integration tests", function (__test) {
           // type Group doesn't have a title property, so we create an
           // intersection type that does
           const firstGroup = data[0] as Group & { title: string };
-          firstGroup.title.should.equal("mod");
+          expect(firstGroup).toHaveProperty("title", "mod");
         });
 
         it("should patch a group", async () => {
@@ -1257,12 +1294,9 @@ describe("HTTP Integration tests", function (__test) {
           });
 
           it("should create a non-existent resource when safe is true", async () => {
-            (
+            expect(
               await bucket.updateGroup({ id, members: ["all"] }, { safe: true })
-            ).should.have
-              .property("data")
-              .to.have.property("members")
-              .eql(["all"]);
+            ).toHaveProperty("data.members", ["all"]);
           });
 
           it("should not override existing data with no last_modified", async () => {
@@ -1285,7 +1319,7 @@ describe("HTTP Integration tests", function (__test) {
           await bucket.createGroup("foo");
           await bucket.deleteGroup("foo");
           const { data } = await bucket.listGroups();
-          data.map((coll) => coll.id).should.not.include("foo");
+          expect(data.map((coll) => coll.id)).not.includes("foo");
         });
 
         describe("Safe option", () => {
@@ -1314,25 +1348,25 @@ describe("HTTP Integration tests", function (__test) {
           });
 
           const { data } = await bucket.collection("comments").listRecords();
-          data
-            .map((comment) => comment.content)
-            .sort()
-            .should.deep.equal(["plop", "yo"]);
+          expect(data.map((comment) => comment.content).sort()).toStrictEqual([
+            "plop",
+            "yo",
+          ]);
         });
 
         describe("Safe option", () => {
           it("should allow batching operations for current bucket", async () => {
-            (
-              await bucket.batch(
-                (batch) => {
-                  batch.createCollection("comments");
-                  batch.createCollection("comments");
-                },
-                { safe: true, aggregate: true }
-              )
-            ).should.have
-              .property("conflicts")
-              .to.have.lengthOf(1);
+            expect(
+              (
+                await bucket.batch(
+                  (batch) => {
+                    batch.createCollection("comments");
+                    batch.createCollection("comments");
+                  },
+                  { safe: true, aggregate: true }
+                )
+              ).conflicts
+            ).toHaveLength(1);
           });
         });
       });
@@ -1344,13 +1378,12 @@ describe("HTTP Integration tests", function (__test) {
           let coll: Collection;
 
           beforeEach(async () => {
-            const _coll = await collPromise();
-            return (coll = _coll);
+            coll = await collPromise();
           });
 
           describe(".getTotalRecords()", () => {
             it("should retrieve the initial total number of records", async () => {
-              (await coll.getTotalRecords()).should.equal(0);
+              expect(await coll.getTotalRecords()).toBe(0);
             });
 
             it("should retrieve the updated total number of records", async () => {
@@ -1358,21 +1391,19 @@ describe("HTTP Integration tests", function (__test) {
                 batch.createRecord({ a: 1 });
                 batch.createRecord({ a: 2 });
               });
-              (await coll.getTotalRecords()).should.equal(2);
+              expect(await coll.getTotalRecords()).eql(2);
             });
           });
 
           describe(".getPermissions()", () => {
             it("should retrieve permissions", async () => {
-              (await coll.getPermissions()).should.have
-                .property("write")
-                .to.have.lengthOf(1);
+              expect((await coll.getPermissions()).write).toHaveLength(1);
             });
           });
 
           describe(".setPermissions()", () => {
-            beforeEach(() => {
-              return coll.setData({ a: 1 });
+            beforeEach(async () => {
+              await coll.setData({ a: 1 });
             });
 
             it("should set typed permissions", async () => {
@@ -1400,7 +1431,7 @@ describe("HTTP Integration tests", function (__test) {
           describe(".addPermissions()", () => {
             beforeEach(async () => {
               await coll.setPermissions({ read: ["github:n1k0"] });
-              return await coll.setData({ a: 1 });
+              await coll.setData({ a: 1 });
             });
 
             it("should append collection permissions", async () => {
@@ -1418,7 +1449,7 @@ describe("HTTP Integration tests", function (__test) {
           describe(".removePermissions()", () => {
             beforeEach(async () => {
               await coll.setPermissions({ read: ["github:n1k0"] });
-              return await coll.setData({ a: 1 });
+              await coll.setData({ a: 1 });
             });
 
             it("should pop collection permissions", async () => {
@@ -1426,7 +1457,7 @@ describe("HTTP Integration tests", function (__test) {
                 read: ["github:n1k0"],
               });
               expect((res as KintoResponse).data.a).eql(1);
-              expect((res as KintoResponse).permissions.read).eql(undefined);
+              expect((res as KintoResponse).permissions.read).toBeUndefined();
             });
           });
 
@@ -1434,13 +1465,13 @@ describe("HTTP Integration tests", function (__test) {
             it("should retrieve collection data", async () => {
               await coll.setData({ signed: true });
               const data = (await coll.getData()) as { signed: boolean };
-              data.should.have.property("signed").eql(true);
+              expect(data).toHaveProperty("signed", true);
             });
           });
 
           describe(".setData()", () => {
-            beforeEach(() => {
-              return coll.setPermissions({ read: ["github:n1k0"] });
+            beforeEach(async () => {
+              await coll.setPermissions({ read: ["github:n1k0"] });
             });
 
             it("should set collection data", async () => {
@@ -1468,10 +1499,9 @@ describe("HTTP Integration tests", function (__test) {
           describe(".createRecord()", () => {
             describe("No record id provided", () => {
               it("should create a record", async () => {
-                (await coll.createRecord({ title: "foo" })).should.have
-                  .property("data")
-                  .to.have.property("title")
-                  .eql("foo");
+                expect(
+                  await coll.createRecord({ title: "foo" })
+                ).toHaveProperty("data.title", "foo");
               });
 
               describe("Safe option", () => {
@@ -1497,10 +1527,10 @@ describe("HTTP Integration tests", function (__test) {
               };
 
               it("should create a record", async () => {
-                (await coll.createRecord(record)).should.have
-                  .property("data")
-                  .to.have.property("title")
-                  .eql("foo");
+                expect(await coll.createRecord(record)).toHaveProperty(
+                  "data.title",
+                  "foo"
+                );
               });
             });
           });
@@ -1513,7 +1543,7 @@ describe("HTTP Integration tests", function (__test) {
               // type KintoObject doesn't have a title property, so we create
               // an intersection type that does
               const record = data[0] as KintoObject & { title: string };
-              record.title.should.equal("mod");
+              expect(record.title).toBe("mod");
             });
 
             it("should patch a record", async () => {
@@ -1531,10 +1561,10 @@ describe("HTTP Integration tests", function (__test) {
               const id = "2dcd0e65-468c-4655-8015-30c8b3a1c8f8";
 
               const { data } = await coll.updateRecord({ id, title: "blah" });
-              (await coll.getRecord(data.id)).should.have
-                .property("data")
-                .to.have.property("title")
-                .eql("blah");
+              expect(await coll.getRecord(data.id)).toHaveProperty(
+                "data.title",
+                "blah"
+              );
             });
 
             describe("Safe option", () => {
@@ -1554,12 +1584,9 @@ describe("HTTP Integration tests", function (__test) {
               });
 
               it("should create a non-existent resource when safe is true", async () => {
-                (
+                expect(
                   await coll.updateRecord({ id, title: "foo" }, { safe: true })
-                ).should.have
-                  .property("data")
-                  .to.have.property("title")
-                  .eql("foo");
+                ).toHaveProperty("data.title", "foo");
               });
 
               it("should not override existing data with no last_modified", async () => {
@@ -1581,9 +1608,7 @@ describe("HTTP Integration tests", function (__test) {
             it("should delete a record", async () => {
               const { data } = await coll.createRecord({ title: "foo" });
               await coll.deleteRecord(data.id);
-              (await coll.listRecords()).should.have
-                .property("data")
-                .deep.equals([]);
+              expect(await coll.listRecords()).toHaveProperty("data", []);
             });
 
             describe("Safe option", () => {
@@ -1611,36 +1636,33 @@ describe("HTTP Integration tests", function (__test) {
               let result: KintoResponse<{ attachment: Attachment }>;
 
               beforeEach(async () => {
-                const res = await coll.addAttachment(
+                result = await coll.addAttachment(
                   dataURL,
                   { foo: "bar" },
                   { permissions: { write: ["github:n1k0"] } }
                 );
-                return (result = res as KintoResponse<{
-                  attachment: Attachment;
-                }>);
+
+                if (typeof window == "undefined") {
+                  vitest.spyOn(global, "Blob").mockImplementation(fakeBlob);
+                }
               });
 
               it("should create a record with an attachment", () => {
-                expect(result)
-                  .to.have.property("data")
-                  .to.have.property("attachment")
-                  .to.have.property("size")
-                  .eql(input.length);
+                expect(result).toHaveProperty(
+                  "data.attachment.size",
+                  input.length
+                );
               });
 
               it("should create a record with provided record data", () => {
-                expect(result)
-                  .to.have.property("data")
-                  .to.have.property("foo")
-                  .eql("bar");
+                expect(result).toHaveProperty("data.foo", "bar");
               });
 
               it("should create a record with provided permissions", () => {
-                expect(result)
-                  .to.have.property("permissions")
-                  .to.have.property("write")
-                  .contains("github:n1k0");
+                expect(result).toHaveProperty(
+                  "permissions.write",
+                  expect.arrayContaining(["github:n1k0"])
+                );
               });
             });
 
@@ -1648,33 +1670,24 @@ describe("HTTP Integration tests", function (__test) {
               const dataURL = "data:text/plain;base64," + btoa("blah");
 
               it("should default filename to 'untitled' if not specified", async () => {
-                (await coll.addAttachment(dataURL)).should.have
-                  .property("data")
-                  .have.property("attachment")
-                  .have.property("filename")
-                  .eql("untitled");
+                expect(await coll.addAttachment(dataURL)).toHaveProperty(
+                  "data.attachment.filename",
+                  "untitled"
+                );
               });
 
               it("should allow to specify safe in options", async () => {
-                (
+                expect(
                   await coll.addAttachment(dataURL, undefined, { safe: true })
-                ).should.to.have
-                  .property("data")
-                  .to.have.property("attachment")
-                  .to.have.property("size")
-                  .eql(4);
+                ).toHaveProperty("data.attachment.size", 4);
               });
 
               it("should allow to specify a filename in options", async () => {
-                (
+                expect(
                   await coll.addAttachment(dataURL, undefined, {
                     filename: "MYFILE.DAT",
                   })
-                ).should.have
-                  .property("data")
-                  .have.property("attachment")
-                  .have.property("filename")
-                  .eql("MYFILE.DAT");
+                ).toHaveProperty("data.attachment.filename", "MYFILE.DAT");
               });
             });
           });
@@ -1688,19 +1701,19 @@ describe("HTTP Integration tests", function (__test) {
 
             beforeEach(async () => {
               const res = await coll.addAttachment(dataURL);
-              return (recordId = (
+              recordId = (
                 res as KintoResponse<{
                   attachment: Attachment;
                 }>
-              ).data.id);
+              ).data.id;
             });
 
             it("should remove an attachment from a record", async () => {
               await coll.removeAttachment(recordId);
-              (await coll.getRecord(recordId)).should.have
-                .property("data")
-                .to.have.property("attachment")
-                .eql(null);
+              expect(await coll.getRecord(recordId)).toHaveProperty(
+                "data.attachment",
+                null
+              );
             });
           });
 
@@ -1708,10 +1721,10 @@ describe("HTTP Integration tests", function (__test) {
             it("should retrieve a record by its id", async () => {
               const { data } = await coll.createRecord({ title: "blah" });
 
-              (await coll.getRecord(data.id)).should.have
-                .property("data")
-                .to.have.property("title")
-                .eql("blah");
+              expect(await coll.getRecord(data.id)).toHaveProperty(
+                "data.title",
+                "blah"
+              );
             });
           });
 
@@ -1720,7 +1733,7 @@ describe("HTTP Integration tests", function (__test) {
               await coll.createRecord({ title: "foo" });
 
               const { data } = await coll.listRecords();
-              data.map((record) => record.title).should.deep.equal(["foo"]);
+              expect(data.map((record) => record.title)).toStrictEqual(["foo"]);
             });
 
             it("should order records by field", async () => {
@@ -1731,14 +1744,16 @@ describe("HTTP Integration tests", function (__test) {
               );
 
               const { data } = await coll.listRecords({ sort: "title" });
-              data
-                .map((record) => record.title)
-                .should.deep.equal(["art1", "art2", "art3"]);
+              expect(data.map((record) => record.title)).toStrictEqual([
+                "art1",
+                "art2",
+                "art3",
+              ]);
             });
 
             describe("Filtering", () => {
-              beforeEach(() => {
-                return coll.batch((batch) => {
+              beforeEach(async () => {
+                await coll.batch((batch) => {
                   batch.createRecord({ name: "paul", age: 28 });
                   batch.createRecord({ name: "jess", age: 54 });
                   batch.createRecord({ name: "john", age: 33 });
@@ -1751,22 +1766,25 @@ describe("HTTP Integration tests", function (__test) {
                   sort: "age",
                   filters: { min_age: 30 },
                 });
-                data
-                  .map((record) => record.name)
-                  .should.deep.equal(["john", "jess"]);
+                expect(data.map((record) => record.name)).toStrictEqual([
+                  "john",
+                  "jess",
+                ]);
               });
 
               it("should properly escape unicode filters", async () => {
                 const { data } = await coll.listRecords({
                   filters: { name: "rené" },
                 });
-                data.map((record) => record.name).should.deep.equal(["rené"]);
+                expect(data.map((record) => record.name)).toStrictEqual([
+                  "rené",
+                ]);
               });
 
               it("should resolve with collection last_modified value", async () => {
-                (await coll.listRecords()).should.have
-                  .property("last_modified")
-                  .to.be.a("string");
+                expectTypeOf(
+                  (await coll.listRecords()).last_modified
+                ).toBeString();
               });
             });
 
@@ -1777,19 +1795,19 @@ describe("HTTP Integration tests", function (__test) {
                 ts1 = (await coll.listRecords()).last_modified!;
                 await coll.createRecord({ n: 1 });
                 ts2 = (await coll.listRecords()).last_modified!;
-                return await coll.createRecord({ n: 2 });
+                await coll.createRecord({ n: 2 });
               });
 
               it("should retrieve all records modified since provided timestamp", async () => {
-                (await coll.listRecords({ since: ts1 })).should.have
-                  .property("data")
-                  .to.have.lengthOf(2);
+                expect(
+                  (await coll.listRecords({ since: ts1 })).data
+                ).toHaveLength(2);
               });
 
               it("should only list changes made after the provided timestamp", async () => {
-                (await coll.listRecords({ since: ts2 })).should.have
-                  .property("data")
-                  .to.have.lengthOf(1);
+                expect(
+                  (await coll.listRecords({ since: ts2 })).data
+                ).toHaveLength(1);
               });
             });
 
@@ -1797,12 +1815,9 @@ describe("HTTP Integration tests", function (__test) {
               let rec1: KintoObject, rec2: KintoObject, rec3: KintoObject;
 
               beforeEach(async () => {
-                const resp = await coll.createRecord({ n: 1 });
-                rec1 = (resp as KintoResponse).data;
-                const res = await coll.createRecord({ n: 2 });
-                rec2 = (res as KintoResponse).data;
-                const res_1 = await coll.createRecord({ n: 3 });
-                return (rec3 = (res_1 as KintoResponse).data);
+                rec1 = (await coll.createRecord({ n: 1 })).data;
+                rec2 = (await coll.createRecord({ n: 2 })).data;
+                rec3 = (await coll.createRecord({ n: 3 })).data;
               });
 
               it("should resolve with a regular list result object", async () => {
@@ -1814,13 +1829,13 @@ describe("HTTP Integration tests", function (__test) {
                 expect(result.last_modified).eql(String(rec3.last_modified));
                 expect(result.hasNextPage).eql(false);
                 expect(result.totalRecords).eql(expectedSnapshot.length);
-                expect(() => result.next()).to.Throw(Error, /pagination/);
+                expect(() => result.next()).toThrowError(/pagination/);
               });
 
               it("should handle creations", async () => {
-                (await coll.listRecords({ at: rec1.last_modified })).should.have
-                  .property("data")
-                  .eql([rec1]);
+                expect(
+                  await coll.listRecords({ at: rec1.last_modified })
+                ).toHaveProperty("data", [rec1]);
               });
 
               it("should handle updates", async () => {
@@ -1829,7 +1844,7 @@ describe("HTTP Integration tests", function (__test) {
                 const { data } = await coll.listRecords({
                   at: updatedRec2.last_modified,
                 });
-                expect(data).eql([updatedRec2, rec3, rec1]);
+                expect(data).toStrictEqual([updatedRec2, rec3, rec1]);
               });
 
               it("should handle deletions", async () => {
@@ -1837,7 +1852,7 @@ describe("HTTP Integration tests", function (__test) {
                 const { data } = await coll.listRecords({
                   at: (res as KintoResponse).data.last_modified,
                 });
-                expect(data).eql([rec3, rec2]);
+                expect(data).toStrictEqual([rec3, rec2]);
               });
 
               it("should handle re-creations", async () => {
@@ -1846,7 +1861,7 @@ describe("HTTP Integration tests", function (__test) {
                 const { data } = await coll.listRecords({
                   at: rec3.last_modified,
                 });
-                expect(data).eql([rec3, rec2, rec1]);
+                expect(data).toStrictEqual([rec3, rec2, rec1]);
               });
 
               it("should handle plural delete before timestamp", async () => {
@@ -1860,7 +1875,7 @@ describe("HTTP Integration tests", function (__test) {
                 const { data } = await coll.listRecords({
                   at: rec4.last_modified,
                 });
-                expect(data).eql([rec4, rec2, rec1]);
+                expect(data).toStrictEqual([rec4, rec2, rec1]);
               });
 
               it("should handle plural delete after timestamp", async () => {
@@ -1874,7 +1889,7 @@ describe("HTTP Integration tests", function (__test) {
                 const { data } = await coll.listRecords({
                   at: rec33.last_modified,
                 });
-                expect(data).eql([rec33, rec3, rec2, rec1]);
+                expect(data).toStrictEqual([rec33, rec3, rec2, rec1]);
               });
 
               it("should handle long list of changes", async () => {
@@ -1885,9 +1900,7 @@ describe("HTTP Integration tests", function (__test) {
                 });
                 const at = (res as OperationResponse[])[50].body.data
                   .last_modified;
-                (await coll.listRecords({ at })).should.have
-                  .property("data")
-                  .to.lengthOf(54);
+                expect((await coll.listRecords({ at })).data).toHaveLength(54);
               });
 
               describe("Mixed CRUD operations", () => {
@@ -1925,26 +1938,26 @@ describe("HTTP Integration tests", function (__test) {
                 });
 
                 it("should compute snapshot1 as expected", () => {
-                  expect(s1).eql([rec1]);
+                  expect(s1).toStrictEqual([rec1]);
                 });
 
                 it("should compute snapshot2 as expected", () => {
-                  expect(s2).eql([rec2, rec1]);
+                  expect(s2).toStrictEqual([rec2, rec1]);
                 });
 
                 it("should compute snapshot3 as expected", () => {
-                  expect(s3).eql([rec3, rec2, rec1]);
+                  expect(s3).toStrictEqual([rec3, rec2, rec1]);
                 });
 
                 it("should compute snapshot4 as expected", () => {
-                  expect(s4).eql([rec4, rec1up, rec3]);
+                  expect(s4).toStrictEqual([rec4, rec1up, rec3]);
                 });
               });
             });
 
             describe("Pagination", () => {
-              beforeEach(() => {
-                return coll.batch((batch) => {
+              beforeEach(async () => {
+                await coll.batch((batch) => {
                   for (let i = 1; i <= 3; i++) {
                     batch.createRecord({ n: i });
                   }
@@ -1953,18 +1966,18 @@ describe("HTTP Integration tests", function (__test) {
 
               it("should not paginate by default", async () => {
                 const { data } = await coll.listRecords();
-                data.map((record) => record.n).should.deep.equal([3, 2, 1]);
+                expect(data.map((record) => record.n)).toStrictEqual([3, 2, 1]);
               });
 
               it("should paginate by chunks", async () => {
                 const { data } = await coll.listRecords({ limit: 2 });
-                data.map((record) => record.n).should.deep.equal([3, 2]);
+                expect(data.map((record) => record.n)).toStrictEqual([3, 2]);
               });
 
               it("should provide a next method to load next page", async () => {
                 const res = await coll.listRecords({ limit: 2 });
                 const { data } = await res.next();
-                data.map((record) => record.n).should.deep.equal([1]);
+                expect(data.map((record) => record.n)).toStrictEqual([1]);
               });
 
               it("should resolve with an empty array on exhausted pagination", async () => {
@@ -1981,18 +1994,18 @@ describe("HTTP Integration tests", function (__test) {
                 // Note: Server has no limit by default, so here we get all the
                 // records.
                 const { data } = await coll.listRecords();
-                data.map((record) => record.n).should.deep.equal([3, 2, 1]);
+                expect(data.map((record) => record.n)).toStrictEqual([3, 2, 1]);
               });
 
               it("should retrieve specified number of pages", async () => {
                 const { data } = await coll.listRecords({ limit: 1, pages: 2 });
-                data.map((record) => record.n).should.deep.equal([3, 2]);
+                expect(data.map((record) => record.n)).toStrictEqual([3, 2]);
               });
 
               it("should allow fetching next page after last page if any", async () => {
                 const { next } = await coll.listRecords({ limit: 1, pages: 1 });
                 const { data } = await next();
-                data.map((record) => record.n).should.deep.equal([3, 2]);
+                expect(data.map((record) => record.n)).toStrictEqual([3, 2]);
               });
 
               it("should should retrieve all existing pages", async () => {
@@ -2000,7 +2013,7 @@ describe("HTTP Integration tests", function (__test) {
                   limit: 1,
                   pages: Infinity,
                 });
-                data.map((record) => record.n).should.deep.equal([3, 2, 1]);
+                expect(data.map((record) => record.n)).toStrictEqual([3, 2, 1]);
               });
             });
           });
@@ -2012,7 +2025,10 @@ describe("HTTP Integration tests", function (__test) {
                 batch.createRecord({ title: "b" });
               });
               const { data } = await coll.listRecords({ sort: "title" });
-              data.map((record) => record.title).should.deep.equal(["a", "b"]);
+              expect(data.map((record) => record.title)).toStrictEqual([
+                "a",
+                "b",
+              ]);
             });
           });
         });

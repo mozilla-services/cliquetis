@@ -1,105 +1,116 @@
 /* eslint dot-notation: off */
-import sinon from "sinon";
 import KintoClient from "../../src/http";
 import Bucket, { BucketOptions } from "../../src/http/bucket";
 import Collection from "../../src/http/collection";
 import { PaginationResult } from "../../src/http/base";
-import { Stub, expectAsyncError, fakeHeaders } from "../test_utils";
-
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, beforeEach, afterEach } =
-  intern.getPlugin("interface.bdd");
+import { expectAsyncError, fakeHeaders } from "../test_utils";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  Mock,
+  vitest,
+} from "vitest";
 
 const FAKE_SERVER_URL = "http://fake-server/v1";
 
 /** @test {Bucket} */
 describe("Bucket", () => {
-  let sandbox: sinon.SinonSandbox, client: KintoClient;
+  let client: KintoClient;
 
   function getBlogBucket(options?: BucketOptions) {
     return new Bucket(client, "blog", options);
   }
 
   beforeEach(() => {
-    sandbox = sinon.createSandbox();
     client = new KintoClient(FAKE_SERVER_URL);
   });
 
   afterEach(() => {
-    sandbox.restore();
+    vitest.restoreAllMocks();
   });
 
   describe("Options handling", () => {
     it("should accept options", () => {
       const options = { headers: { Foo: "Bar" }, safe: true };
       const bucket = getBlogBucket(options);
-      expect(bucket).property("_headers", options.headers);
-      expect(bucket).property("_safe", options.safe);
+      expect(bucket).toHaveProperty("_headers", options.headers);
+      expect(bucket).toHaveProperty("_safe", options.safe);
     });
   });
 
   /** @test {Bucket#getData} */
   describe("#getData()", () => {
     it("should execute expected request", async () => {
-      const executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ headers: fakeHeaders() }));
+      const executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ headers: fakeHeaders() });
 
       await getBlogBucket().getData();
 
-      sinon.assert.calledWithMatch(executeStub, {
-        path: "/buckets/blog",
-        headers: {},
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          path: "/buckets/blog",
+          headers: {},
+        },
+        {
+          fields: undefined,
+          query: undefined,
+          retry: 0,
+        }
+      );
     });
 
     it("should resolve with response data", async () => {
       const response = { data: { foo: "bar" }, permissions: {} };
-      sandbox.stub(client, "execute").returns(Promise.resolve(response));
+      vitest.spyOn(client, "execute").mockResolvedValue(response);
 
       const data = (await getBlogBucket().getData()) as { foo: string };
-      data.should.deep.equal({
+      expect(data).toStrictEqual({
         foo: "bar",
       });
     });
 
     it("should support query and fields", () => {
       const response = { data: { foo: "bar" }, permissions: {} };
-      const requestStub = sandbox.stub(client.http, "request").returns(
-        Promise.resolve({
+      const requestStub = vitest
+        .spyOn(client.http, "request")
+        .mockResolvedValue({
           headers: fakeHeaders(),
           json: response,
           status: 200,
-        })
-      );
+        });
 
       getBlogBucket().getData({ query: { a: "b" }, fields: ["c", "d"] });
 
-      sinon.assert.calledWithMatch(
-        requestStub,
+      expect(requestStub).toHaveBeenCalledWith(
         "http://fake-server/v1/buckets/blog?a=b&_fields=c,d",
         {
           headers: {},
+        },
+        {
+          retry: 0,
         }
       );
     });
   });
 
   describe("#setData()", () => {
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ data: 1 }));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ data: 1 });
     });
 
     it("should set the bucket data", () => {
       getBlogBucket().setData({ a: 1 });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog",
@@ -116,8 +127,7 @@ describe("Bucket", () => {
     it("should handle the patch option", () => {
       getBlogBucket().setData({ a: 1 }, { patch: true });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PATCH",
           path: "/buckets/blog",
@@ -134,8 +144,7 @@ describe("Bucket", () => {
     it("should handle the safe option", () => {
       getBlogBucket().setData({ a: 1 }, { safe: true, last_modified: 42 });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog",
@@ -150,20 +159,25 @@ describe("Bucket", () => {
     });
 
     it("should resolve with json result", async () => {
-      (await getBlogBucket().setData({ a: 1 })).should.deep.equal({ data: 1 });
+      expect(await getBlogBucket().setData({ a: 1 })).toStrictEqual({
+        data: 1,
+      });
     });
   });
 
   /** @test {Bucket#collection} */
   describe("#collection()", () => {
     it("should return a Collection instance", () => {
-      expect(getBlogBucket().collection("posts")).to.be.an.instanceOf(
-        Collection
+      expectTypeOf<Collection>().toMatchTypeOf(
+        getBlogBucket().collection("posts")
       );
     });
 
     it("should return a named collection", () => {
-      expect(getBlogBucket().collection("posts").name).eql("posts");
+      expect(getBlogBucket().collection("posts")).toHaveProperty(
+        "name",
+        "posts"
+      );
     });
 
     it("should propagate bucket options", () => {
@@ -180,33 +194,30 @@ describe("Bucket", () => {
   /** @test {Bucket#getCollectionsTimestamp} */
   describe("#getCollectionsTimestamp()", () => {
     it("should execute expected request", async () => {
-      const executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ headers: fakeHeaders() }));
+      const executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ headers: fakeHeaders() });
 
       await getBlogBucket().getCollectionsTimestamp();
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         { method: "HEAD", path: "/buckets/blog/collections", headers: {} },
         //@ts-ignore Limitation of the Parameters type for overloaded functions
-        { raw: true }
+        { raw: true, retry: 0 }
       );
     });
 
     it("should resolve with the ETag header value", async () => {
       const etag = '"42"';
-      sandbox.stub(client, "execute").returns(
-        Promise.resolve({
-          headers: {
-            get(value: string) {
-              return value == "ETag" ? etag : null;
-            },
+      vitest.spyOn(client, "execute").mockResolvedValue({
+        headers: {
+          get(value: string) {
+            return value == "ETag" ? etag : null;
           },
-        })
-      );
+        },
+      });
 
-      (await getBlogBucket().getCollectionsTimestamp())!.should.deep.equal(
+      expect(await getBlogBucket().getCollectionsTimestamp()).toStrictEqual(
         etag
       );
     });
@@ -227,22 +238,21 @@ describe("Bucket", () => {
       hasNextPage: false,
       totalRecords: 2,
     };
-    let paginatedListStub: Stub<typeof client.paginatedList>;
+    let paginatedListStub: Mock;
 
     beforeEach(() => {
-      paginatedListStub = sandbox
-        .stub(client, "paginatedList")
-        .returns(Promise.resolve(data));
+      paginatedListStub = vitest
+        .spyOn(client, "paginatedList")
+        .mockResolvedValue(data);
     });
 
     it("should list bucket collections", () => {
       getBlogBucket().listCollections({ since: "42" });
 
-      sinon.assert.calledWithMatch(
-        paginatedListStub,
+      expect(paginatedListStub).toHaveBeenCalledWith(
         "/buckets/blog/collections",
         { since: "42" },
-        { headers: {} }
+        { headers: {}, retry: 0 }
       );
     });
 
@@ -251,11 +261,14 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).listCollections({ headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        paginatedListStub,
+      expect(paginatedListStub).toHaveBeenCalledWith(
         "/buckets/blog/collections",
-        {},
-        { headers: { Foo: "Bar", Baz: "Qux" } }
+        {
+          headers: {
+            Baz: "Qux",
+          },
+        },
+        { headers: { Foo: "Bar", Baz: "Qux" }, retry: 0 }
       );
     });
 
@@ -265,33 +278,32 @@ describe("Bucket", () => {
         fields: ["c", "d"],
       });
 
-      sinon.assert.calledWithMatch(
-        paginatedListStub,
+      expect(paginatedListStub).toHaveBeenCalledWith(
         "/buckets/blog/collections",
-        { filters: { a: "b" }, fields: ["c", "d"] }
+        { filters: { a: "b" }, fields: ["c", "d"] },
+        { headers: {}, retry: 0 }
       );
     });
 
     it("should return the list of collections", async () => {
-      (await getBlogBucket().listCollections()).should.deep.equal(data);
+      expect(await getBlogBucket().listCollections()).toStrictEqual(data);
     });
   });
 
   /** @test {Bucket#createCollection} */
   describe("#createCollection()", () => {
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ data: {} }));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ data: {} });
     });
 
     it("should accept a safe option", () => {
       getBlogBucket().createCollection("foo", { safe: true });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/collections/foo",
@@ -310,12 +322,11 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).createCollection("foo", { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/collections/foo",
-          headers: { Baz: "Qux" },
+          headers: { Baz: "Qux", Foo: "Bar" },
           body: {
             data: { id: "foo" },
             permissions: undefined,
@@ -329,8 +340,7 @@ describe("Bucket", () => {
       it("should create a named collection", () => {
         getBlogBucket().createCollection("foo");
 
-        sinon.assert.calledWithMatch(
-          executeStub,
+        expect(executeStub).toHaveBeenCalledWith(
           {
             method: "PUT",
             path: "/buckets/blog/collections/foo",
@@ -350,8 +360,7 @@ describe("Bucket", () => {
           safe: true,
         }).createCollection("foo", { headers: { Baz: "Qux" } });
 
-        sinon.assert.calledWithMatch(
-          executeStub,
+        expect(executeStub).toHaveBeenCalledWith(
           {
             method: "PUT",
             path: "/buckets/blog/collections/foo",
@@ -370,8 +379,7 @@ describe("Bucket", () => {
       it("should create an unnamed collection", () => {
         getBlogBucket().createCollection();
 
-        sinon.assert.calledWithMatch(
-          executeStub,
+        expect(executeStub).toHaveBeenCalledWith(
           {
             method: "POST",
             path: "/buckets/blog/collections",
@@ -391,14 +399,15 @@ describe("Bucket", () => {
           safe: true,
         }).createCollection("", { headers: { Baz: "Qux" } });
 
-        sinon.assert.calledWithMatch(
-          executeStub,
+        expect(executeStub).toHaveBeenCalledWith(
           {
             method: "POST",
             path: "/buckets/blog/collections",
             headers: { Foo: "Bar", Baz: "Qux", "If-None-Match": "*" },
             body: {
-              data: {},
+              data: {
+                id: "",
+              },
               permissions: undefined,
             },
           },
@@ -410,19 +419,18 @@ describe("Bucket", () => {
 
   /** @test {Bucket#deleteCollection} */
   describe("#deleteCollection", () => {
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ data: {} }));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ data: {} });
     });
 
     it("should delete a collection", () => {
       getBlogBucket().deleteCollection("todelete");
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/blog/collections/todelete",
@@ -441,12 +449,11 @@ describe("Bucket", () => {
         last_modified: 42,
       });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/blog/collections/todelete",
-          headers: { Baz: "Qux", "If-Match": `"42"` },
+          headers: { Baz: "Qux", "If-Match": `"42"`, Foo: "Bar" },
         },
         { retry: 0 }
       );
@@ -465,8 +472,7 @@ describe("Bucket", () => {
         { safe: true }
       );
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/blog/collections/todelete",
@@ -481,8 +487,7 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).deleteCollection("todelete", { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/blog/collections/todelete",
@@ -495,21 +500,27 @@ describe("Bucket", () => {
 
   /** @test {Bucket#deleteCollections} */
   describe("#deleteCollections", () => {
-    let executeStub: sinon.SinonStub;
+    let executeStub: Mock;
     beforeEach(() => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ data: {} }));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ data: {} });
     });
 
     it("should delete all collections", () => {
       getBlogBucket().deleteCollections();
 
-      sinon.assert.calledWithMatch(executeStub, {
-        method: "DELETE",
-        path: "/buckets/blog/collections?_sort=-last_modified",
-        headers: {},
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          method: "DELETE",
+          path: "/buckets/blog/collections?_sort=-last_modified",
+          headers: {},
+        },
+        {
+          raw: true,
+          retry: 0,
+        }
+      );
     });
 
     it("should accept a timestamp option", () => {
@@ -517,11 +528,17 @@ describe("Bucket", () => {
         filters: { since: 42 },
       });
 
-      sinon.assert.calledWithMatch(executeStub, {
-        method: "DELETE",
-        path: "/buckets/blog/collections?since=42&_sort=-last_modified",
-        headers: {},
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          method: "DELETE",
+          path: "/buckets/blog/collections?since=42&_sort=-last_modified",
+          headers: {},
+        },
+        {
+          raw: true,
+          retry: 0,
+        }
+      );
     });
 
     it("should merge default options", () => {
@@ -529,10 +546,17 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).deleteCollections({ headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(executeStub, {
-        path: "/buckets/blog/collections?_sort=-last_modified",
-        headers: { Foo: "Bar", Baz: "Qux" },
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          path: "/buckets/blog/collections?_sort=-last_modified",
+          headers: { Foo: "Bar", Baz: "Qux" },
+          method: "DELETE",
+        },
+        {
+          raw: true,
+          retry: 0,
+        }
+      );
     });
 
     it("should support filters and fields", () => {
@@ -541,43 +565,47 @@ describe("Bucket", () => {
         fields: ["c", "d"],
       });
 
-      sinon.assert.calledWithMatch(executeStub, {
-        path: "/buckets/blog/collections?a=b&_sort=-last_modified&_fields=c,d",
-        headers: {},
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          path: "/buckets/blog/collections?a=b&_sort=-last_modified&_fields=c,d",
+          headers: {},
+          method: "DELETE",
+        },
+        {
+          raw: true,
+          retry: 0,
+        }
+      );
     });
   });
 
   /** @test {Bucket#getGroupsTimestamp} */
   describe("#getGroupsTimestamp()", () => {
     it("should execute expected request", async () => {
-      const executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ headers: fakeHeaders() }));
+      const executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ headers: fakeHeaders() });
 
       await getBlogBucket().getGroupsTimestamp();
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         { method: "HEAD", path: "/buckets/blog/groups", headers: {} },
         //@ts-ignore Limitation of the Parameters type for overloaded functions
-        { raw: true }
+        { raw: true, retry: 0 }
       );
     });
 
     it("should resolve with the ETag header value", async () => {
       const etag = '"42"';
-      sandbox.stub(client, "execute").returns(
-        Promise.resolve({
-          headers: {
-            get(value: string) {
-              return value == "ETag" ? etag : null;
-            },
+      vitest.spyOn(client, "execute").mockResolvedValue({
+        headers: {
+          get(value: string) {
+            return value == "ETag" ? etag : null;
           },
-        })
-      );
+        },
+      });
 
-      (await getBlogBucket().getGroupsTimestamp())!.should.deep.equal(etag);
+      expect(await getBlogBucket().getGroupsTimestamp()).toStrictEqual(etag);
     });
   });
 
@@ -596,22 +624,21 @@ describe("Bucket", () => {
       hasNextPage: false,
       totalRecords: 2,
     };
-    let paginatedListStub: Stub<typeof client.paginatedList>;
+    let paginatedListStub: Mock;
 
     beforeEach(() => {
-      paginatedListStub = sandbox
-        .stub(client, "paginatedList")
-        .returns(Promise.resolve(data));
+      paginatedListStub = vitest
+        .spyOn(client, "paginatedList")
+        .mockResolvedValue(data);
     });
 
     it("should list bucket groups", () => {
       getBlogBucket().listGroups({ since: "42" });
 
-      sinon.assert.calledWithMatch(
-        paginatedListStub,
+      expect(paginatedListStub).toHaveBeenCalledWith(
         "/buckets/blog/groups",
         { since: "42" },
-        { headers: {} }
+        { headers: {}, retry: 0 }
       );
     });
 
@@ -620,75 +647,83 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).listGroups({ headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        paginatedListStub,
+      expect(paginatedListStub).toHaveBeenCalledWith(
         "/buckets/blog/groups",
-        {},
-        { headers: { Foo: "Bar", Baz: "Qux" } }
+        { headers: { Baz: "Qux" } },
+        { headers: { Foo: "Bar", Baz: "Qux" }, retry: 0 }
       );
     });
 
     it("should support filters and fields", () => {
       getBlogBucket().listGroups({ filters: { a: "b" }, fields: ["c", "d"] });
 
-      sinon.assert.calledWithMatch(paginatedListStub, "/buckets/blog/groups", {
-        filters: { a: "b" },
-        fields: ["c", "d"],
-      });
+      expect(paginatedListStub).toHaveBeenCalledWith(
+        "/buckets/blog/groups",
+        {
+          filters: { a: "b" },
+          fields: ["c", "d"],
+        },
+        { headers: {}, retry: 0 }
+      );
     });
 
     it("should return the list of groups", async () => {
-      (await getBlogBucket().listGroups()).should.deep.equal(data);
+      expect(await getBlogBucket().listGroups()).toStrictEqual(data);
     });
   });
 
   /** @test {Bucket#getGroup} */
   describe("#getGroup", () => {
     const fakeGroup = { data: {}, permissions: {} };
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     it("should extend request headers with optional ones", () => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve(fakeGroup));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue(fakeGroup);
 
       getBlogBucket({
         headers: { Foo: "Bar" },
       }).getGroup("foo", { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(executeStub, {
-        path: "/buckets/blog/groups/foo",
-        headers: { Foo: "Bar", Baz: "Qux" },
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          path: "/buckets/blog/groups/foo",
+          headers: { Foo: "Bar", Baz: "Qux" },
+        },
+        { retry: 0, fields: undefined, query: undefined }
+      );
     });
 
     it("should return the group", async () => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve(fakeGroup));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue(fakeGroup);
 
-      (await getBlogBucket().getGroup("foo")).should.deep.equal(fakeGroup);
+      expect(await getBlogBucket().getGroup("foo")).toStrictEqual(fakeGroup);
     });
 
     it("should support query and fields", () => {
-      const requestStub = sandbox.stub(client.http, "request").returns(
-        Promise.resolve({
+      const requestStub = vitest
+        .spyOn(client.http, "request")
+        .mockResolvedValue({
           headers: fakeHeaders(),
           json: {},
           status: 200,
-        })
-      );
+        });
 
       getBlogBucket().getGroup("foo", {
         query: { a: "b" },
         fields: ["c", "d"],
       });
 
-      sinon.assert.calledWithMatch(
-        requestStub,
+      expect(requestStub).toHaveBeenCalledWith(
         "http://fake-server/v1/buckets/blog/groups/foo?a=b&_fields=c,d",
         {
           headers: {},
+        },
+        {
+          retry: 0,
         }
       );
     });
@@ -696,19 +731,18 @@ describe("Bucket", () => {
 
   /** @test {Bucket#createGroup} */
   describe("#createGroup", () => {
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ data: {} }));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ data: {} });
     });
 
     it("should accept a safe option", () => {
       getBlogBucket().createGroup("foo", [], { safe: true });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/groups/foo",
@@ -724,8 +758,7 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).createGroup("foo", [], { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/groups/foo",
@@ -739,8 +772,7 @@ describe("Bucket", () => {
     it("should create a group with empty list of members", () => {
       getBlogBucket().createGroup("foo");
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/groups/foo",
@@ -758,8 +790,7 @@ describe("Bucket", () => {
       };
       getBlogBucket().createGroup("foo", [], group);
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/groups/foo",
@@ -776,12 +807,12 @@ describe("Bucket", () => {
 
   /** @test {Bucket#updateGroup} */
   describe("#updateGroup", () => {
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ data: {} }));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ data: {} });
     });
 
     it("should throw if record is not an object", async () => {
@@ -801,8 +832,7 @@ describe("Bucket", () => {
     it("should accept a patch option", () => {
       getBlogBucket().updateGroup({ id: "foo", members: [] }, { patch: true });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PATCH",
           path: "/buckets/blog/groups/foo",
@@ -821,8 +851,7 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).updateGroup({ id: "foo", members: [] }, { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/groups/foo",
@@ -839,8 +868,7 @@ describe("Bucket", () => {
     it("should update the group from first argument", () => {
       getBlogBucket().updateGroup({ id: "foo", members: [] });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/groups/foo",
@@ -861,8 +889,7 @@ describe("Bucket", () => {
       };
       getBlogBucket().updateGroup({ id: "foo", members: [] }, group);
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog/groups/foo",
@@ -879,19 +906,18 @@ describe("Bucket", () => {
 
   /** @test {Bucket#updateGroup} */
   describe("#deleteGroup", () => {
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ data: {} }));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ data: {} });
     });
 
     it("should delete a group", () => {
       getBlogBucket().deleteGroup("todelete");
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/blog/groups/todelete",
@@ -910,8 +936,7 @@ describe("Bucket", () => {
         last_modified: 42,
       });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/blog/groups/todelete",
@@ -934,8 +959,7 @@ describe("Bucket", () => {
         { safe: true }
       );
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/blog/groups/todelete",
@@ -950,8 +974,7 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).deleteGroup("todelete", { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/blog/groups/todelete",
@@ -964,21 +987,24 @@ describe("Bucket", () => {
 
   /** @test {Bucket#deleteGroups} */
   describe("#deleteGroups", () => {
-    let executeStub: sinon.SinonStub;
+    let executeStub: Mock;
     beforeEach(() => {
-      executeStub = sandbox
-        .stub(client, "execute")
-        .returns(Promise.resolve({ data: {} }));
+      executeStub = vitest
+        .spyOn(client, "execute")
+        .mockResolvedValue({ data: {} });
     });
 
     it("should delete all Groups", () => {
       getBlogBucket().deleteGroups();
 
-      sinon.assert.calledWithMatch(executeStub, {
-        method: "DELETE",
-        path: "/buckets/blog/groups?_sort=-last_modified",
-        headers: {},
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          method: "DELETE",
+          path: "/buckets/blog/groups?_sort=-last_modified",
+          headers: {},
+        },
+        { raw: true, retry: 0 }
+      );
     });
 
     it("should accept a timestamp option", () => {
@@ -986,11 +1012,14 @@ describe("Bucket", () => {
         filters: { since: 42 },
       });
 
-      sinon.assert.calledWithMatch(executeStub, {
-        method: "DELETE",
-        path: "/buckets/blog/groups?since=42&_sort=-last_modified",
-        headers: {},
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          method: "DELETE",
+          path: "/buckets/blog/groups?since=42&_sort=-last_modified",
+          headers: {},
+        },
+        { raw: true, retry: 0 }
+      );
     });
 
     it("should merge default options", () => {
@@ -998,11 +1027,14 @@ describe("Bucket", () => {
         headers: { Foo: "Bar" },
       }).deleteGroups({ headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(executeStub, {
-        method: "DELETE",
-        path: "/buckets/blog/groups?_sort=-last_modified",
-        headers: { Foo: "Bar", Baz: "Qux" },
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          method: "DELETE",
+          path: "/buckets/blog/groups?_sort=-last_modified",
+          headers: { Foo: "Bar", Baz: "Qux" },
+        },
+        { raw: true, retry: 0 }
+      );
     });
 
     it("should support filters and fields", () => {
@@ -1011,30 +1043,31 @@ describe("Bucket", () => {
         fields: ["c", "d"],
       });
 
-      sinon.assert.calledWithMatch(executeStub, {
-        method: "DELETE",
-        path: "/buckets/blog/groups?a=b&_sort=-last_modified&_fields=c,d",
-        headers: {},
-      });
+      expect(executeStub).toHaveBeenCalledWith(
+        {
+          method: "DELETE",
+          path: "/buckets/blog/groups?a=b&_sort=-last_modified&_fields=c,d",
+          headers: {},
+        },
+        { raw: true, retry: 0 }
+      );
     });
   });
 
   /** @test {Bucket#getPermissions} */
   describe("#getPermissions()", () => {
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox.stub(client, "execute").returns(
-        Promise.resolve({
-          data: {},
-          permissions: { write: ["fakeperms"] },
-        })
-      );
+      executeStub = vitest.spyOn(client, "execute").mockResolvedValue({
+        data: {},
+        permissions: { write: ["fakeperms"] },
+      });
     });
 
     it("should retrieve permissions", async () => {
       const bucket = getBlogBucket();
-      (await bucket.getPermissions()).should.deep.equal({
+      expect(await bucket.getPermissions()).toStrictEqual({
         write: ["fakeperms"],
       });
     });
@@ -1043,10 +1076,13 @@ describe("Bucket", () => {
       const bucket = getBlogBucket({ headers: { Foo: "Bar" }, safe: true });
 
       return bucket.getPermissions({ headers: { Baz: "Qux" } }).then((_) => {
-        sinon.assert.calledWithMatch(executeStub, {
-          path: "/buckets/blog",
-          headers: { Baz: "Qux", Foo: "Bar" },
-        });
+        expect(executeStub).toHaveBeenCalledWith(
+          {
+            path: "/buckets/blog",
+            headers: { Baz: "Qux", Foo: "Bar" },
+          },
+          { retry: 0 }
+        );
       });
     });
   });
@@ -1054,22 +1090,19 @@ describe("Bucket", () => {
   /** @test {Bucket#setPermissions} */
   describe("#setPermissions()", () => {
     const fakePermissions = { read: [] as string[], write: [] as string[] };
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox.stub(client, "execute").returns(
-        Promise.resolve({
-          data: {},
-          permissions: fakePermissions,
-        })
-      );
+      executeStub = vitest.spyOn(client, "execute").mockResolvedValue({
+        data: {},
+        permissions: fakePermissions,
+      });
     });
 
     it("should set permissions", () => {
       getBlogBucket().setPermissions(fakePermissions);
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog",
@@ -1085,8 +1118,7 @@ describe("Bucket", () => {
 
       bucket.setPermissions(fakePermissions, { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog",
@@ -1102,8 +1134,7 @@ describe("Bucket", () => {
 
       bucket.setPermissions(fakePermissions, { last_modified: 42 });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/blog",
@@ -1115,31 +1146,28 @@ describe("Bucket", () => {
     });
 
     it("should resolve with response data", async () => {
-      (await getBlogBucket().setPermissions(fakePermissions)).should.have
-        .property("permissions")
-        .eql(fakePermissions);
+      expect(
+        await getBlogBucket().setPermissions(fakePermissions)
+      ).toHaveProperty("permissions", fakePermissions);
     });
   });
 
   /** @test {Bucket#addPermissions} */
   describe("#addPermissions()", () => {
     const fakePermissions = { read: [] as string[], write: [] as string[] };
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox.stub(client, "execute").returns(
-        Promise.resolve({
-          data: {},
-          permissions: fakePermissions,
-        })
-      );
+      executeStub = vitest.spyOn(client, "execute").mockResolvedValue({
+        data: {},
+        permissions: fakePermissions,
+      });
     });
 
     it("should append permissions", () => {
       getBlogBucket().addPermissions(fakePermissions);
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PATCH",
           path: "/buckets/blog",
@@ -1157,8 +1185,7 @@ describe("Bucket", () => {
 
       bucket.addPermissions(fakePermissions, { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PATCH",
           path: "/buckets/blog",
@@ -1178,22 +1205,19 @@ describe("Bucket", () => {
   /** @test {Bucket#removePermissions} */
   describe("#removePermissions()", () => {
     const fakePermissions = { read: [] as string[], write: [] as string[] };
-    let executeStub: Stub<typeof client.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox.stub(client, "execute").returns(
-        Promise.resolve({
-          data: {},
-          permissions: fakePermissions,
-        })
-      );
+      executeStub = vitest.spyOn(client, "execute").mockResolvedValue({
+        data: {},
+        permissions: fakePermissions,
+      });
     });
 
     it("should pop permissions", () => {
       getBlogBucket().removePermissions(fakePermissions);
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PATCH",
           path: "/buckets/blog",
@@ -1211,8 +1235,7 @@ describe("Bucket", () => {
 
       bucket.removePermissions(fakePermissions, { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PATCH",
           path: "/buckets/blog",
@@ -1231,11 +1254,11 @@ describe("Bucket", () => {
 
   /** @test {Bucket#batch} */
   describe("#batch()", () => {
-    let batchStub: sinon.SinonStub;
+    let batchStub: Mock;
 
     beforeEach(() => {
-      batchStub = sandbox.stub();
-      sandbox.stub(client, "batch").get(() => batchStub);
+      batchStub = vitest.fn();
+      vitest.spyOn(client, "batch").mockImplementation(batchStub);
     });
 
     it("should batch operations for this bucket", () => {
@@ -1244,7 +1267,7 @@ describe("Bucket", () => {
 
       getBlogBucket().batch(fn);
 
-      sinon.assert.calledWith(batchStub, fn, {
+      expect(batchStub).toHaveBeenCalledWith(fn, {
         bucket: "blog",
         headers: {},
         retry: 0,
@@ -1262,7 +1285,7 @@ describe("Bucket", () => {
         safe: true,
       }).batch(fn, { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWith(batchStub, fn, {
+      expect(batchStub).toHaveBeenCalledWith(fn, {
         bucket: "blog",
         headers: { Foo: "Bar", Baz: "Qux" },
         retry: 0,
@@ -1276,13 +1299,13 @@ describe("Bucket", () => {
   describe("#execute()", () => {
     it("should rely on client execute", () => {
       const bucket = getBlogBucket();
-      const executeStub = sandbox.stub();
-      sandbox.stub(client, "execute").get(() => executeStub);
+      const executeStub = vitest.fn();
+      vitest.spyOn(client, "execute").mockImplementation(executeStub);
       const req = { path: "/", headers: {} };
 
       bucket.execute(req);
 
-      sinon.assert.calledWith(executeStub, req);
+      expect(executeStub).toHaveBeenCalledWith(req);
     });
   });
 });

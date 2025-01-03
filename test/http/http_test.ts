@@ -1,7 +1,5 @@
-import sinon from "sinon";
-import { EventEmitter } from "events";
 import mitt from "mitt";
-import { fakeServerResponse, Stub, expectAsyncError } from "../test_utils";
+import { fakeServerResponse, expectAsyncError } from "../test_utils";
 import HTTP from "../../src/http/http";
 import {
   NetworkTimeoutError,
@@ -9,25 +7,30 @@ import {
   UnparseableResponseError,
 } from "../../src/http/errors";
 import { Emitter } from "../../src/types";
-
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, beforeEach, afterEach } =
-  intern.getPlugin("interface.bdd");
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  Mock,
+  vitest,
+} from "vitest";
 
 /** @test {HTTP} */
 describe("HTTP class", () => {
   function runSuite(label: string, emitter?: () => Emitter) {
     describe(label, () => {
-      let sandbox: sinon.SinonSandbox, events: Emitter | undefined, http: HTTP;
+      let events: Emitter | undefined, http: HTTP;
 
       beforeEach(() => {
-        sandbox = sinon.createSandbox();
         events = emitter ? emitter() : undefined;
         http = new HTTP(events, { timeout: 100 });
       });
 
-      afterEach(() => sandbox.restore());
+      afterEach(() => {
+        vitest.restoreAllMocks();
+      });
 
       /** @test {HTTP#constructor} */
       describe("#constructor", () => {
@@ -35,7 +38,7 @@ describe("HTTP class", () => {
           if (emitter) {
             const events = emitter();
             const http = new HTTP(events);
-            expect(http.events).to.eql(events);
+            expect(http.events).toStrictEqual(events);
           }
         });
 
@@ -44,7 +47,7 @@ describe("HTTP class", () => {
             new HTTP(events, {
               requestMode: "no-cors",
             }).requestMode
-          ).eql("no-cors");
+          ).toBe("no-cors");
         });
 
         it("should not complain if an events handler is not provided", () => {
@@ -57,17 +60,17 @@ describe("HTTP class", () => {
       /** @test {HTTP#request} */
       describe("#request()", () => {
         describe("Request headers", () => {
-          let fetchStub: sinon.SinonStub;
+          let fetchStub: Mock;
           beforeEach(() => {
-            fetchStub = sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(200, {}, {}));
+            fetchStub = vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(fakeServerResponse(200, {}, {}));
           });
 
           it("should set default headers", () => {
             http.request("/");
 
-            expect(fetchStub.firstCall.args[1].headers).eql(
+            expect(fetchStub.mock.calls[0][1].headers).toStrictEqual(
               HTTP.DEFAULT_REQUEST_HEADERS
             );
           });
@@ -75,7 +78,7 @@ describe("HTTP class", () => {
           it("should merge custom headers with default ones", () => {
             http.request("/", { headers: { Foo: "Bar" } });
 
-            expect(fetchStub.firstCall.args[1].headers.Foo).eql("Bar");
+            expect(fetchStub.mock.calls[0][1].headers.Foo).toBe("Bar");
           });
 
           it("should drop custom content-type header for multipart body", () => {
@@ -84,63 +87,63 @@ describe("HTTP class", () => {
               body: new FormData(),
             });
 
-            expect(fetchStub.firstCall.args[1].headers["Content-Type"]).to.be
+            expect(fetchStub.mock.calls[0][1].headers["Content-Type"]).to.be
               .undefined;
           });
         });
 
         describe("Request CORS mode", () => {
-          let fetchStub: sinon.SinonStub;
+          let fetchStub: Mock;
 
           it("should use default CORS mode", () => {
             const http = new HTTP(events);
-            fetchStub = sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(200, {}, {}));
+            fetchStub = vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(fakeServerResponse(200, {}, {}));
 
             http.request("/");
 
-            expect(fetchStub.firstCall.args[1].mode).eql("cors");
+            expect(fetchStub.mock.calls[0][1].mode).toBe("cors");
           });
 
           it("should use configured custom CORS mode", () => {
             const http = new HTTP(events, { requestMode: "no-cors" });
-            fetchStub = sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(200, {}, {}));
+            fetchStub = vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(fakeServerResponse(200, {}, {}));
 
             http.request("/");
 
-            expect(fetchStub.firstCall.args[1].mode).eql("no-cors");
+            expect(fetchStub.mock.calls[0][1].mode).toBe("no-cors");
           });
         });
 
         describe("Succesful request", () => {
           beforeEach(() => {
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(200, { a: 1 }, { b: 2 }));
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(fakeServerResponse(200, { a: 1 }, { b: 2 }));
           });
 
           it("should resolve with HTTP status", async () => {
             const { status } = await http.request("/");
-            status.should.equal(200);
+            expect(status).toBe(200);
           });
 
           it("should resolve with JSON body", async () => {
             const { json } = await http.request("/");
-            (json as { a: number }).should.deep.equal({ a: 1 });
+            expect(json as { a: number }).toStrictEqual({ a: 1 });
           });
 
           it("should resolve with headers", async () => {
             const { headers } = await http.request("/");
-            headers.get("b")!.should.equal("2");
+            expect(headers.get("b")).toStrictEqual("2");
           });
         });
 
         describe("Request timeout", () => {
           beforeEach(() => {
-            sandbox.stub(http as any, "fetchFunc").returns(
+            vitest.spyOn(http as any, "fetchFunc").mockReturnValue(
               new Promise((resolve) => {
                 setTimeout(resolve, 20000);
               })
@@ -172,33 +175,31 @@ describe("HTTP class", () => {
 
         describe("No content response", () => {
           it("should resolve with null JSON if Content-Length header is missing", async () => {
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(200, null, {}));
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(fakeServerResponse(200, null, {}));
 
             const { json } = await http.request("/");
-            expect(json).to.be.null;
+            expect(json).toBeNull();
           });
         });
 
         describe("Malformed JSON response", () => {
           it("should reject with an appropriate message", async () => {
-            sandbox.stub(http as any, "fetchFunc").returns(
-              Promise.resolve({
-                status: 200,
-                headers: {
-                  get(name: string) {
-                    if (name !== "Alert") {
-                      return "fake";
-                    }
-                    return "";
-                  },
+            vitest.spyOn(http as any, "fetchFunc").mockResolvedValue({
+              status: 200,
+              headers: {
+                get(name: string) {
+                  if (name !== "Alert") {
+                    return "fake";
+                  }
+                  return "";
                 },
-                text() {
-                  return Promise.resolve("an example of invalid JSON");
-                },
-              })
-            );
+              },
+              text() {
+                return Promise.resolve("an example of invalid JSON");
+              },
+            });
 
             await expectAsyncError(
               () => http.request("/"),
@@ -210,7 +211,7 @@ describe("HTTP class", () => {
 
         describe("Business error responses", () => {
           it("should reject on status code > 400", async () => {
-            sandbox.stub(http as any, "fetchFunc").returns(
+            vitest.spyOn(http as any, "fetchFunc").mockResolvedValue(
               fakeServerResponse(400, {
                 code: 400,
                 details: [
@@ -247,20 +248,20 @@ describe("HTTP class", () => {
               error: "Invalid parameters",
               message: "data is missing",
             };
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(400, errorBody));
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(fakeServerResponse(400, errorBody));
 
             const error = await expectAsyncError(
               () => http.request("/"),
               undefined,
               ServerResponse
             );
-            error.should.have.deep.property("data", errorBody);
+            expect(error).toHaveProperty("data", errorBody);
           });
 
           it("should reject on status code > 400 even with empty body", async () => {
-            sandbox.stub(http as any, "fetchFunc").resolves({
+            vitest.spyOn(http as any, "fetchFunc").mockResolvedValue({
               status: 400,
               statusText: "Cake Is A Lie",
               headers: {
@@ -291,18 +292,18 @@ describe("HTTP class", () => {
             message: "This service will soon be decommissioned",
           };
 
-          let consoleWarnStub: Stub<typeof console.warn>;
-          let eventsEmitStub: Stub<Emitter["emit"]> | null;
+          let consoleWarnStub: Mock;
+          let eventsEmitStub: Mock;
 
           beforeEach(() => {
-            consoleWarnStub = sandbox.stub(console, "warn");
-            eventsEmitStub = events ? sandbox.stub(events, "emit") : null;
+            consoleWarnStub = vitest.spyOn(console, "warn");
+            eventsEmitStub = events ? vitest.spyOn(events, "emit") : null;
           });
 
           it("should handle deprecation header", async () => {
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(
                 fakeServerResponse(
                   200,
                   {},
@@ -311,32 +312,30 @@ describe("HTTP class", () => {
               );
 
             await http.request("/");
-            sinon.assert.calledOnce(consoleWarnStub);
-            sinon.assert.calledWithExactly(
-              consoleWarnStub,
+            expect(consoleWarnStub).toHaveBeenCalledOnce();
+            expect(consoleWarnStub).toHaveBeenCalledWith(
               eolObject.message,
               eolObject.url
             );
           });
 
           it("should handle deprecation header parse error", async () => {
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(200, {}, { Alert: "dafuq" }));
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(fakeServerResponse(200, {}, { Alert: "dafuq" }));
 
             await http.request("/");
-            sinon.assert.calledOnce(consoleWarnStub);
-            sinon.assert.calledWithExactly(
-              consoleWarnStub,
+            expect(consoleWarnStub).toHaveBeenCalledOnce();
+            expect(consoleWarnStub).toHaveBeenCalledWith(
               "Unable to parse Alert header message",
               "dafuq"
             );
           });
 
           it("should emit a deprecated event on Alert header", async () => {
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(
                 fakeServerResponse(
                   200,
                   {},
@@ -346,92 +345,100 @@ describe("HTTP class", () => {
 
             await http.request("/");
             if (events && eventsEmitStub) {
-              expect(eventsEmitStub.firstCall.args[0]).eql("deprecated");
-              expect(eventsEmitStub.firstCall.args[1]).eql(eolObject);
+              expect(eventsEmitStub.mock.calls[0][0]).toBe("deprecated");
+              expect(eventsEmitStub.mock.calls[0][1]).toStrictEqual(eolObject);
             }
           });
         });
 
         describe("Backoff header handling", () => {
-          let eventsEmitStub: Stub<Emitter["emit"]> | null;
+          let eventsEmitStub: Mock;
           beforeEach(() => {
             // Make Date#getTime always returning 1000000, for predictability
-            sandbox.stub(Date.prototype, "getTime").returns(1000 * 1000);
-            eventsEmitStub = events ? sandbox.stub(events, "emit") : null;
+            vitest
+              .spyOn(Date.prototype, "getTime")
+              .mockReturnValue(1000 * 1000);
+            eventsEmitStub = events ? vitest.spyOn(events, "emit") : null;
           });
 
           it("should emit a backoff event on set Backoff header", async () => {
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(200, {}, { Backoff: "1000" }));
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(
+                fakeServerResponse(200, {}, { Backoff: "1000" })
+              );
 
             await http.request("/");
             if (events && eventsEmitStub) {
-              expect(eventsEmitStub.firstCall.args[0]).eql("backoff");
-              expect(eventsEmitStub.firstCall.args[1]).eql(2000000);
+              expect(eventsEmitStub.mock.calls[0][0]).toBe("backoff");
+              expect(eventsEmitStub.mock.calls[0][1]).toBe(2000000);
             }
           });
 
           it("should emit a backoff event even on error responses", async () => {
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(503, {}, { Backoff: "1000" }));
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(
+                fakeServerResponse(503, {}, { Backoff: "1000" })
+              );
 
             try {
               await http.request("/");
             } catch (err) {}
             if (events && eventsEmitStub) {
-              expect(eventsEmitStub.firstCall.args[0]).eql("backoff");
-              expect(eventsEmitStub.firstCall.args[1]).eql(2000000);
+              expect(eventsEmitStub.mock.calls[0][0]).toBe("backoff");
+              expect(eventsEmitStub.mock.calls[0][1]).toBe(2000000);
             }
           });
 
           it("should emit a backoff event on missing Backoff header", async () => {
-            sandbox
-              .stub(http as any, "fetchFunc")
-              .returns(fakeServerResponse(200, {}, {}));
+            vitest
+              .spyOn(http as any, "fetchFunc")
+              .mockReturnValue(fakeServerResponse(200, {}, {}));
 
             await http.request("/");
             if (events && eventsEmitStub) {
-              expect(eventsEmitStub.firstCall.args[0]).eql("backoff");
-              expect(eventsEmitStub.firstCall.args[1]).eql(0);
+              expect(eventsEmitStub.mock.calls[0][0]).toBe("backoff");
+              expect(eventsEmitStub.mock.calls[0][1]).toBe(0);
             }
           });
         });
 
         describe("Retry-After header handling", () => {
-          let eventsEmitStub: Stub<Emitter["emit"]> | null;
+          let eventsEmitStub: Mock;
           describe("Event", () => {
             beforeEach(() => {
               // Make Date#getTime always returning 1000000, for predictability
-              sandbox.stub(Date.prototype, "getTime").returns(1000 * 1000);
-              eventsEmitStub = events ? sandbox.stub(events, "emit") : null;
+              vitest
+                .spyOn(Date.prototype, "getTime")
+                .mockReturnValue(1000 * 1000);
+              eventsEmitStub = events ? vitest.spyOn(events, "emit") : null;
             });
 
             it("should emit a retry-after event when Retry-After is set", async () => {
-              sandbox
-                .stub(http as any, "fetchFunc")
-                .returns(
+              vitest
+                .spyOn(http as any, "fetchFunc")
+                .mockReturnValue(
                   fakeServerResponse(200, {}, { "Retry-After": "1000" })
                 );
 
               await http.request("/", {}, { retry: 0 });
               if (events && eventsEmitStub) {
-                expect(eventsEmitStub.lastCall.args[0]).eql("retry-after");
-                expect(eventsEmitStub.lastCall.args[1]).eql(2000000);
+                expect(eventsEmitStub.mock.lastCall[0]).toBe("retry-after");
+                expect(eventsEmitStub.mock.lastCall[1]).toBe(2000000);
               }
             });
           });
 
           describe("Retry loop", () => {
-            let fetch: sinon.SinonStub;
+            let fetch: Mock;
 
             beforeEach(() => {
-              fetch = sandbox.stub(http as any, "fetchFunc");
+              fetch = vitest.spyOn(http as any, "fetchFunc");
             });
 
             it("should not retry the request by default", async () => {
-              fetch.returns(
+              fetch.mockResolvedValue(
                 fakeServerResponse(503, {}, { "Retry-After": "1" })
               );
 
@@ -440,25 +447,25 @@ describe("HTTP class", () => {
 
             it("should retry the request if specified", async () => {
               const success = { success: true };
-              fetch
-                .onCall(0)
-                .returns(fakeServerResponse(503, {}, { "Retry-After": "1" }));
-              fetch.onCall(1).returns(fakeServerResponse(200, success));
+              fetch.mockResolvedValueOnce(
+                fakeServerResponse(503, {}, { "Retry-After": "1" })
+              );
+              fetch.mockResolvedValueOnce(fakeServerResponse(200, success));
 
               const { json } = await http.request("/", {}, { retry: 1 });
-              (json as { success: boolean }).should.deep.equal(success);
+              expect(json as { success: boolean }).toStrictEqual(success);
             });
 
             it("should error when retries are exhausted", async () => {
-              fetch
-                .onCall(0)
-                .returns(fakeServerResponse(503, {}, { "Retry-After": "1" }));
-              fetch
-                .onCall(1)
-                .returns(fakeServerResponse(503, {}, { "Retry-After": "1" }));
-              fetch
-                .onCall(2)
-                .returns(fakeServerResponse(503, {}, { "Retry-After": "1" }));
+              fetch.mockResolvedValueOnce(
+                fakeServerResponse(503, {}, { "Retry-After": "1" })
+              );
+              fetch.mockResolvedValueOnce(
+                fakeServerResponse(503, {}, { "Retry-After": "1" })
+              );
+              fetch.mockResolvedValueOnce(
+                fakeServerResponse(503, {}, { "Retry-After": "1" })
+              );
 
               await expectAsyncError(
                 () => http.request("/", {}, { retry: 2 }),
@@ -471,7 +478,12 @@ describe("HTTP class", () => {
     });
   }
 
-  runSuite("with EventEmitter", () => new EventEmitter());
+  if (typeof window == "undefined") {
+    // don't run in browser
+    const { EventEmitter } = require("events");
+    runSuite("with EventEmitter", () => new EventEmitter());
+  }
+
   runSuite("with mitt", () => mitt());
   runSuite("without EventEmitter");
 });

@@ -20,10 +20,6 @@ import {
 } from "../src/utils";
 import { expectAsyncError } from "./test_utils";
 
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it } = intern.getPlugin("interface.bdd");
-
 describe("Utils", () => {
   /** @test {sortObjects} */
   describe("#sortObjects", () => {
@@ -119,22 +115,22 @@ describe("Utils", () => {
   describe("#waterfall", () => {
     it("should resolve with init value when list is empty", async () => {
       const result = await waterfall([], 42);
-      result.should.equal(42);
+      expect(result).toBe(42);
     });
 
     it("should resolve executing a single sync function", async () => {
       const result = await waterfall([(x) => x + 1], 42);
-      result.should.equal(43);
+      expect(result).toBe(43);
     });
 
     it("should resolve executing multiple sync functions", async () => {
       const result = await waterfall([(x) => x + 1, (x) => x * 2], 42);
-      result.should.equal(86);
+      expect(result).toBe(86);
     });
 
     it("should resolve using a single promise returning function", async () => {
       const result = await waterfall([() => Promise.resolve(42)]);
-      result.should.equal(42);
+      expect(result).toBe(42);
     });
 
     it("should resolve using multiple promise returning functions", async () => {
@@ -142,7 +138,7 @@ describe("Utils", () => {
         [(x) => Promise.resolve(x + 1), (x) => Promise.resolve(x * 2)],
         42
       );
-      result.should.equal(86);
+      expect(result).toBe(86);
     });
   });
 
@@ -397,7 +393,7 @@ describe("HTTP Utils", () => {
           throw new Error("Should be rejected");
         },
         (err) => {
-          err.should.not.be.undefined;
+          expect(err).toBeDefined();
         }
       );
     });

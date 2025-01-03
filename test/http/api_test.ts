@@ -1,7 +1,5 @@
 /* eslint dot-notation: off */
-import sinon from "sinon";
-import { EventEmitter } from "events";
-import { fakeServerResponse, Stub, expectAsyncError } from "../test_utils";
+import { fakeServerResponse, expectAsyncError } from "../test_utils";
 import KintoClient from "../../src/http";
 import KintoClientBase, {
   SUPPORTED_PROTOCOL_VERSION as SPV,
@@ -10,26 +8,31 @@ import KintoClientBase, {
 import Bucket from "../../src/http/bucket";
 import { HelloResponse, OperationResponse } from "../../src/types";
 import { KintoBatchResponse, AggregateResponse } from "../../src/http/batch";
-
-const { expect } = intern.getPlugin("chai");
-intern.getPlugin("chai").should();
-const { describe, it, beforeEach, afterEach } =
-  intern.getPlugin("interface.bdd");
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  Mock,
+  vitest,
+} from "vitest";
+import mitt, { Emitter } from "mitt";
 
 const FAKE_SERVER_URL = "http://fake-server/v1";
 
 /** @test {KintoClient} */
 describe("KintoClient", () => {
-  let sandbox: sinon.SinonSandbox, api: KintoClient, events: EventEmitter;
+  let api: KintoClient, events: Emitter<any>;
 
   beforeEach(() => {
-    sandbox = sinon.createSandbox();
-    events = new EventEmitter();
+    events = mitt();
     api = new KintoClient(FAKE_SERVER_URL, { events });
   });
 
   afterEach(() => {
-    sandbox.restore();
+    vitest.restoreAllMocks();
   });
 
   /** @test {KintoClient#constructor} */
@@ -112,7 +115,7 @@ describe("KintoClient", () => {
     });
 
     it("should expose provided event emitter as a property", () => {
-      const events = new EventEmitter();
+      const events = mitt();
       expect(new KintoClient(sampleRemote, { events }).events).eql(events);
     });
 
@@ -157,22 +160,22 @@ describe("KintoClient", () => {
   describe("get backoff()", () => {
     it("should provide the remaining backoff time in ms if any", async () => {
       // Make Date#getTime always returning 1000000, for predictability
-      sandbox.stub(Date.prototype, "getTime").returns(1000 * 1000);
-      sandbox
-        .stub(api.http as any, "fetchFunc")
-        .returns(fakeServerResponse(200, {}, { Backoff: "1000" }));
+      vitest.spyOn(Date.prototype, "getTime").mockReturnValue(1000 * 1000);
+      vitest
+        .spyOn(api.http as any, "fetchFunc")
+        .mockReturnValue(fakeServerResponse(200, {}, { Backoff: "1000" }));
 
       await api.listBuckets();
-      return expect(api.backoff).eql(1000000);
+      expect(api.backoff).eql(1000000);
     });
 
     it("should provide no remaining backoff time when none is set", async () => {
-      sandbox
-        .stub(api.http as any, "fetchFunc")
-        .returns(fakeServerResponse(200, {}, {}));
+      vitest
+        .spyOn(api.http as any, "fetchFunc")
+        .mockReturnValue(fakeServerResponse(200, {}, {}));
 
       await api.listBuckets();
-      return expect(api.backoff).eql(0);
+      expect(api.backoff).eql(0);
     });
   });
 
@@ -210,29 +213,29 @@ describe("KintoClient", () => {
     };
 
     it("should retrieve server settings on first request made", async () => {
-      sandbox
-        .stub(api.http as any, "fetchFunc")
-        .returns(fakeServerResponse(200, fakeServerInfo));
+      vitest
+        .spyOn(api.http as any, "fetchFunc")
+        .mockReturnValue(fakeServerResponse(200, fakeServerInfo));
 
-      (await api.fetchServerInfo()).should.deep.equal(fakeServerInfo);
+      expect(await api.fetchServerInfo()).toStrictEqual(fakeServerInfo);
     });
 
     it("should store server settings into the serverSettings property", async () => {
       // api.serverSettings = { a: 1 };
-      sandbox
-        .stub(api.http as any, "fetchFunc")
-        .returns(fakeServerResponse(200, fakeServerInfo));
+      vitest
+        .spyOn(api.http as any, "fetchFunc")
+        .mockReturnValue(fakeServerResponse(200, fakeServerInfo));
 
       await api.fetchServerInfo();
-      expect(api).property("serverInfo").deep.equal(fakeServerInfo);
+      expect(api).toHaveProperty("serverInfo", fakeServerInfo);
     });
 
     it("should not fetch server settings if they're cached already", () => {
       api.serverInfo = fakeServerInfo;
-      const fetchStub = sandbox.stub(api.http as any, "fetchFunc");
+      const fetchStub = vitest.spyOn(api.http as any, "fetchFunc");
 
       api.fetchServerInfo();
-      sinon.assert.notCalled(fetchStub);
+      expect(fetchStub).not.toHaveBeenCalled();
     });
 
     it("should refresh server info if headers were changed", () => {
@@ -249,11 +252,11 @@ describe("KintoClient", () => {
     const fakeServerInfo = { settings: { fake: true } };
 
     it("should retrieve server settings", async () => {
-      sandbox
-        .stub(api.http as any, "fetchFunc")
-        .returns(fakeServerResponse(200, fakeServerInfo));
+      vitest
+        .spyOn(api.http as any, "fetchFunc")
+        .mockReturnValue(fakeServerResponse(200, fakeServerInfo));
 
-      (await api.fetchServerSettings()).should.have.property("fake").eql(true);
+      expect(await api.fetchServerSettings()).toHaveProperty("fake", true);
     });
   });
 
@@ -262,13 +265,11 @@ describe("KintoClient", () => {
     const fakeServerInfo = { capabilities: { fake: true } };
 
     it("should retrieve server capabilities", async () => {
-      sandbox
-        .stub(api.http as any, "fetchFunc")
-        .returns(fakeServerResponse(200, fakeServerInfo));
+      vitest
+        .spyOn(api.http as any, "fetchFunc")
+        .mockReturnValue(fakeServerResponse(200, fakeServerInfo));
 
-      (await api.fetchServerCapabilities()).should.have
-        .property("fake")
-        .eql(true);
+      expect(await api.fetchServerCapabilities()).toHaveProperty("fake", true);
     });
   });
 
@@ -277,11 +278,11 @@ describe("KintoClient", () => {
     const fakeServerInfo = { user: { fake: true } };
 
     it("should retrieve user information", async () => {
-      sandbox
-        .stub(api.http as any, "fetchFunc")
-        .returns(fakeServerResponse(200, fakeServerInfo));
+      vitest
+        .spyOn(api.http as any, "fetchFunc")
+        .mockReturnValue(fakeServerResponse(200, fakeServerInfo));
 
-      (await api.fetchUser())!.should.have.property("fake").eql(true);
+      expect(await api.fetchUser()).toHaveProperty("fake", true);
     });
   });
 
@@ -290,23 +291,21 @@ describe("KintoClient", () => {
     const fakeServerInfo = { http_api_version: { fake: true } };
 
     it("should retrieve current API version", async () => {
-      sandbox
-        .stub(api.http as any, "fetchFunc")
-        .returns(fakeServerResponse(200, fakeServerInfo));
+      vitest
+        .spyOn(api.http as any, "fetchFunc")
+        .mockReturnValue(fakeServerResponse(200, fakeServerInfo));
 
-      (await api.fetchHTTPApiVersion()).should.have.property("fake").eql(true);
+      expect(await api.fetchHTTPApiVersion()).toHaveProperty("fake", true);
     });
   });
 
   /** @test {KintoClient#batch} */
   describe("#batch", () => {
     beforeEach(() => {
-      const fetchServerSettings = sandbox.stub().returns(
-        Promise.resolve({
-          batch_max_requests: 3,
-        })
-      );
-      sandbox.stub(api, "fetchServerSettings").get(() => fetchServerSettings);
+      vitest.spyOn(api, "fetchServerSettings").mockResolvedValue({
+        readonly: false,
+        batch_max_requests: 3,
+      });
     });
 
     function executeBatch(fixtures: { [key: string]: any }[], options = {}) {
@@ -322,25 +321,25 @@ describe("KintoClient", () => {
 
     describe("Batch client setup", () => {
       it("should skip registering HTTP events", async () => {
-        const on = sandbox.spy();
+        const on = vitest.fn();
         const api = new KintoClient(FAKE_SERVER_URL, { events: { on } as any });
 
         await api.batch(() => {});
-        return sinon.assert.calledOnce(on);
+        expect(on).toHaveBeenCalledOnce();
       });
     });
 
     describe("server request", () => {
-      let requestBody: any, requestHeaders: any, fetch: sinon.SinonStub;
+      let requestBody: any, requestHeaders: any, fetch: Mock;
 
       beforeEach(() => {
-        fetch = sandbox.stub(api.http as any, "fetchFunc");
-        fetch.returns(fakeServerResponse(200, { responses: [] }));
+        fetch = vitest.spyOn(api.http as any, "fetchFunc");
+        fetch.mockReturnValue(fakeServerResponse(200, { responses: [] }));
       });
 
       it("should ensure server settings are fetched", async () => {
         await api.batch((batch: KintoClientBase) => batch.createBucket("blog"));
-        return sinon.assert.called(api.fetchServerSettings as any);
+        expect(api.fetchServerSettings).toHaveBeenCalled();
       });
 
       describe("empty request list", () => {
@@ -348,7 +347,7 @@ describe("KintoClient", () => {
           // @ts-ignore
           api.batch((batch) => {});
 
-          sinon.assert.notCalled(fetch);
+          expect(fetch).not.toHaveBeenCalled();
         });
       });
 
@@ -372,13 +371,13 @@ describe("KintoClient", () => {
               },
               { headers: { Foo: "Bar" } }
             );
-          const request = fetch.firstCall.args[1];
+          const request = fetch.mock.calls[0][1];
           requestHeaders = request.headers;
           requestBody = JSON.parse(request.body);
         });
 
         it("should call the batch endpoint", () => {
-          sinon.assert.calledWithMatch(fetch, `/${SPV}/batch`);
+          expect(fetch.mock.lastCall[0]).toMatch(`/${SPV}/batch`);
         });
 
         it("should define main batch request default headers", () => {
@@ -412,7 +411,7 @@ describe("KintoClient", () => {
               },
               { safe: true }
             );
-          const { requests } = JSON.parse(fetch.firstCall.args[1].body);
+          const { requests } = JSON.parse(fetch.mock.calls[0][1].body);
           expect(
             requests.map(
               (r: {
@@ -425,7 +424,7 @@ describe("KintoClient", () => {
         });
       });
 
-      describe("Retry", (__test) => {
+      describe("Retry", () => {
         const response = {
           status: 201,
           path: `/${SPV}/buckets/blog/collections/articles/records`,
@@ -433,10 +432,10 @@ describe("KintoClient", () => {
         };
 
         beforeEach(() => {
-          fetch
-            .onCall(0)
-            .returns(fakeServerResponse(503, {}, { "Retry-After": "1" }));
-          fetch.onCall(1).returns(
+          fetch.mockReturnValueOnce(
+            fakeServerResponse(503, {}, { "Retry-After": "1" })
+          );
+          fetch.mockReturnValueOnce(
             fakeServerResponse(200, {
               responses: [response],
             })
@@ -462,7 +461,7 @@ describe("KintoClient", () => {
       ];
 
       it("should reject on HTTP 400", async () => {
-        sandbox.stub(api.http as any, "fetchFunc").returns(
+        vitest.spyOn(api.http as any, "fetchFunc").mockReturnValue(
           fakeServerResponse(400, {
             error: true,
             errno: 117,
@@ -474,7 +473,7 @@ describe("KintoClient", () => {
       });
 
       it("should reject on HTTP error status code", async () => {
-        sandbox.stub(api.http as any, "fetchFunc").returns(
+        vitest.spyOn(api.http as any, "fetchFunc").mockReturnValue(
           fakeServerResponse(500, {
             error: true,
             message: "http 500",
@@ -497,11 +496,11 @@ describe("KintoClient", () => {
             body: { data: fixtures[1] },
           },
         ];
-        sandbox
-          .stub(api.http as any, "fetchFunc")
-          .returns(fakeServerResponse(200, { responses }));
+        vitest
+          .spyOn(api.http as any, "fetchFunc")
+          .mockReturnValue(fakeServerResponse(200, { responses }));
 
-        (await executeBatch(fixtures)).should.deep.equal(responses);
+        expect(await executeBatch(fixtures)).toStrictEqual(responses);
       });
 
       it("should expose failing subrequest responses", async () => {
@@ -513,11 +512,11 @@ describe("KintoClient", () => {
             body: missingRemotely,
           },
         ];
-        sandbox
-          .stub(api.http as any, "fetchFunc")
-          .returns(fakeServerResponse(200, { responses }));
+        vitest
+          .spyOn(api.http as any, "fetchFunc")
+          .mockReturnValue(fakeServerResponse(200, { responses }));
 
-        (await executeBatch(fixtures)).should.deep.equal(responses);
+        expect(await executeBatch(fixtures)).toStrictEqual(responses);
       });
 
       it("should resolve with encountered HTTP 500", async () => {
@@ -528,11 +527,11 @@ describe("KintoClient", () => {
             body: { 500: true },
           },
         ];
-        sandbox
-          .stub(api.http as any, "fetchFunc")
-          .returns(fakeServerResponse(200, { responses }));
+        vitest
+          .spyOn(api.http as any, "fetchFunc")
+          .mockReturnValue(fakeServerResponse(200, { responses }));
 
-        (await executeBatch(fixtures)).should.deep.equal(responses);
+        expect(await executeBatch(fixtures)).toStrictEqual(responses);
       });
 
       it("should expose encountered HTTP 412", async () => {
@@ -543,11 +542,11 @@ describe("KintoClient", () => {
             body: { details: { existing: { title: "foo" } } },
           },
         ];
-        sandbox
-          .stub(api.http as any, "fetchFunc")
-          .returns(fakeServerResponse(200, { responses }));
+        vitest
+          .spyOn(api.http as any, "fetchFunc")
+          .mockReturnValue(fakeServerResponse(200, { responses }));
 
-        (await executeBatch(fixtures)).should.deep.equal(responses);
+        expect(await executeBatch(fixtures)).toStrictEqual(responses);
       });
     });
 
@@ -561,10 +560,9 @@ describe("KintoClient", () => {
       ];
 
       it("should chunk batch requests", async () => {
-        sandbox
-          .stub(api.http as any, "fetchFunc")
-          .onFirstCall()
-          .returns(
+        vitest
+          .spyOn(api.http as any, "fetchFunc")
+          .mockReturnValueOnce(
             fakeServerResponse(200, {
               responses: [
                 { status: 200, body: { data: 1 } },
@@ -573,39 +571,35 @@ describe("KintoClient", () => {
               ],
             })
           )
-          .onSecondCall()
-          .returns(
+          .mockReturnValueOnce(
             fakeServerResponse(200, {
               responses: [{ status: 200, body: { data: 4 } }],
             })
           );
         const responses = (await executeBatch(fixtures)) as OperationResponse[];
-        responses
-          .map((response) => response.body.data)
-          .should.deep.equal([1, 2, 3, 4]);
+        expect(responses.map((response) => response.body.data)).toStrictEqual([
+          1, 2, 3, 4,
+        ]);
       });
 
       it("should not chunk batch requests if setting is falsy", async () => {
-        const fetchServerSettings = sandbox.stub().returns(
-          Promise.resolve({
-            batch_max_requests: 0,
-          })
-        );
-        sandbox.stub(api, "fetchServerSettings").get(() => fetchServerSettings);
-        const fetchStub = sandbox.stub(api.http as any, "fetchFunc").returns(
+        vitest.spyOn(api, "fetchServerSettings").mockResolvedValue({
+          readonly: false,
+          batch_max_requests: 0,
+        });
+        const fetchStub = vitest.spyOn(api.http, "fetchFunc").mockReturnValue(
           fakeServerResponse(200, {
             responses: [],
           })
         );
         await executeBatch(fixtures);
-        return sinon.assert.calledOnce(fetchStub);
+        expect(fetchStub).toHaveBeenCalledOnce();
       });
 
       it("should map initial records to conflict objects", async () => {
-        sandbox
-          .stub(api.http as any, "fetchFunc")
-          .onFirstCall()
-          .returns(
+        vitest
+          .spyOn(api.http, "fetchFunc")
+          .mockReturnValueOnce(
             fakeServerResponse(200, {
               responses: [
                 { status: 412, body: { details: { existing: { id: 1 } } } },
@@ -614,8 +608,7 @@ describe("KintoClient", () => {
               ],
             })
           )
-          .onSecondCall()
-          .returns(
+          .mockReturnValueOnce(
             fakeServerResponse(200, {
               responses: [
                 { status: 412, body: { details: { existing: { id: 4 } } } },
@@ -624,48 +617,33 @@ describe("KintoClient", () => {
           );
 
         const responses = (await executeBatch(fixtures)) as OperationResponse[];
-        responses
-          .map((response) => response.status)
-          .should.deep.equal([412, 412, 412, 412]);
+        expect(responses.map((response) => response.status)).toStrictEqual([
+          412, 412, 412, 412,
+        ]);
       });
 
       it("should chunk batch requests concurrently", async () => {
-        sandbox
-          .stub(api.http as any, "fetchFunc")
-          .onFirstCall()
-          .returns(
-            new Promise((resolve) => {
-              function onTimeout() {
-                resolve(
-                  fakeServerResponse(200, {
-                    responses: [
-                      { status: 200, body: { data: 1 } },
-                      { status: 200, body: { data: 2 } },
-                      { status: 200, body: { data: 3 } },
-                    ],
-                  })
-                );
-              }
-              setTimeout(onTimeout, 100);
+        const fetchMock = vitest
+          .spyOn(api.http, "fetchFunc")
+          .mockResolvedValueOnce(
+            await fakeServerResponse(200, {
+              responses: [
+                { status: 200, body: { data: 1 } },
+                { status: 200, body: { data: 2 } },
+                { status: 200, body: { data: 3 } },
+              ],
             })
           )
-          .onSecondCall()
-          .returns(
-            new Promise((resolve) => {
-              function onTimeout() {
-                resolve(
-                  fakeServerResponse(200, {
-                    responses: [{ status: 200, body: { data: 4 } }],
-                  })
-                );
-              }
-              setTimeout(onTimeout, 5);
+          .mockResolvedValueOnce(
+            await fakeServerResponse(200, {
+              responses: [{ status: 200, body: { data: 4 } }],
             })
           );
         const responses = (await executeBatch(fixtures)) as OperationResponse[];
-        responses
-          .map((response) => response.body.data)
-          .should.deep.equal([1, 2, 3, 4]);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(responses.map((response) => response.body.data)).toStrictEqual([
+          1, 2, 3, 4,
+        ]);
       });
     });
 
@@ -692,14 +670,14 @@ describe("KintoClient", () => {
             headers: {},
           },
         ];
-        sandbox
-          .stub(api.http as any, "fetchFunc")
-          .returns(fakeServerResponse(200, { responses }));
+        vitest
+          .spyOn(api.http, "fetchFunc")
+          .mockReturnValue(fakeServerResponse(200, { responses }));
 
         const aggregateResponse = (await executeBatch(fixtures, {
           aggregate: true,
         })) as AggregateResponse;
-        aggregateResponse.should.deep.equal({
+        expect(aggregateResponse).toStrictEqual({
           errors: [],
           published: [{}, {}, {}, {}],
           conflicts: [],
@@ -712,14 +690,13 @@ describe("KintoClient", () => {
   /** @test {KintoClient#execute} */
   describe("#execute()", () => {
     it("should ensure passing defined allowed defined request options", async () => {
-      sinon.stub(api, "fetchServerInfo").returns(Promise.resolve({} as any));
-      const request = sinon
-        .stub(api.http, "request")
-        .returns(Promise.resolve({} as any));
+      vitest
+        .spyOn(api, "fetchServerInfo")
+        .mockReturnValue(Promise.resolve({} as any));
+      const request = vitest.spyOn(api.http, "request").mockResolvedValue({});
 
       await api.execute({ path: "/foo", garbage: true } as any);
-      sinon.assert.calledWith(
-        request,
+      expect(request).toHaveBeenCalledWith(
         "http://fake-server/v1/foo",
         {},
         { retry: 0 }
@@ -731,12 +708,12 @@ describe("KintoClient", () => {
   describe("#paginatedList()", () => {
     const ETag = '"42"';
     const path = "/some/path";
-    let executeStub: Stub<typeof api.execute>;
+    let executeStub: Mock;
 
     describe("No pagination", () => {
       beforeEach(() => {
         // Since listRecords use `raw: true`, stub with full response:
-        executeStub = sandbox.stub(api, "execute").returns(
+        executeStub = vitest.spyOn(api, "execute").mockReturnValue(
           Promise.resolve({
             json: { data: [{ a: 1 }] },
             headers: {
@@ -754,45 +731,52 @@ describe("KintoClient", () => {
       it("should execute expected request", () => {
         api.paginatedList(path);
 
-        sinon.assert.calledWithMatch(
-          executeStub,
-          { path: `${path}?_sort=-last_modified`, headers: {} },
+        expect(executeStub).toHaveBeenCalledWith(
+          {
+            path: `${path}?_sort=-last_modified`,
+            headers: {},
+            method: undefined,
+          },
           //@ts-ignore Limitation of the Parameters type for overloaded functions
-          { raw: true }
+          { raw: true, retry: 0 }
         );
       });
 
       it("should sort records", () => {
         api.paginatedList(path, { sort: "title" });
 
-        sinon.assert.calledWithMatch(
-          executeStub,
-          { path: `${path}?_sort=title`, headers: {} },
+        expect(executeStub).toHaveBeenCalledWith(
+          { path: `${path}?_sort=title`, headers: {}, method: undefined },
           //@ts-ignore Limitation of the Parameters type for overloaded functions
-          { raw: true }
+          { raw: true, retry: 0 }
         );
       });
 
       it("should resolve with records list", async () => {
-        (await api.paginatedList(path)).should.have
-          .property("data")
-          .eql([{ a: 1 }]);
+        expect(await api.paginatedList(path)).toHaveProperty("data", [
+          { a: 1 },
+        ]);
       });
 
       it("should resolve with a next() function", async () => {
-        (await api.paginatedList(path)).should.have
-          .property("next")
-          .to.be.a("function");
+        expectTypeOf((await api.paginatedList(path)).next).toBeFunction();
       });
 
       it("should support the since option", () => {
         api.paginatedList(path, { since: ETag });
 
         const qs = "_sort=-last_modified&_since=%2242%22";
-        sinon.assert.calledWithMatch(executeStub, {
-          path: `${path}?${qs}`,
-          headers: {},
-        });
+        expect(executeStub).toHaveBeenCalledWith(
+          {
+            path: `${path}?${qs}`,
+            method: undefined,
+            headers: {},
+          },
+          {
+            raw: true,
+            retry: 0,
+          }
+        );
       });
 
       it("should throw if the since option is invalid", async () => {
@@ -803,32 +787,41 @@ describe("KintoClient", () => {
       });
 
       it("should resolve with the collection last_modified without quotes", async () => {
-        (await api.paginatedList(path)).should.have
-          .property("last_modified")
-          .eql("42");
+        expect(await api.paginatedList(path)).toHaveProperty(
+          "last_modified",
+          "42"
+        );
       });
 
       it("should resolve with the hasNextPage being set to false", async () => {
-        (await api.paginatedList(path)).should.have
-          .property("hasNextPage")
-          .eql(false);
+        expect(await api.paginatedList(path)).toHaveProperty(
+          "hasNextPage",
+          false
+        );
       });
 
       it("should pass fields through", () => {
         api.paginatedList(path, { fields: ["c", "d"] });
 
-        sinon.assert.calledWithMatch(executeStub, {
-          path: `${path}?_sort=-last_modified&_fields=c,d`,
-          headers: {},
-        });
+        expect(executeStub).toHaveBeenCalledWith(
+          {
+            path: `${path}?_sort=-last_modified&_fields=c,d`,
+            headers: {},
+            method: undefined,
+          },
+          {
+            raw: true,
+            retry: 0,
+          }
+        );
       });
     });
 
     describe("Filtering", () => {
-      let executeStub: Stub<typeof api.execute>;
+      let executeStub: Mock;
 
       beforeEach(() => {
-        executeStub = sandbox.stub(api, "execute").returns(
+        executeStub = vitest.spyOn(api, "execute").mockReturnValue(
           Promise.resolve({
             json: { data: [] },
             headers: { get: () => {} },
@@ -840,11 +833,10 @@ describe("KintoClient", () => {
         api.paginatedList(path, { sort: "x", filters: { min_y: 2, not_z: 3 } });
 
         const expectedQS = "min_y=2&not_z=3&_sort=x";
-        sinon.assert.calledWithMatch(
-          executeStub,
-          { path: `${path}?${expectedQS}`, headers: {} },
+        expect(executeStub).toHaveBeenCalledWith(
+          { path: `${path}?${expectedQS}`, headers: {}, method: undefined },
           //@ts-ignore Limitation of the Parameters type for overloaded functions
-          { raw: true }
+          { raw: true, retry: 0 }
         );
       });
 
@@ -852,22 +844,21 @@ describe("KintoClient", () => {
         api.paginatedList(path, { filters: { min_y: 2, not_z: 3 } });
 
         const expectedQS = "min_y=2&not_z=3&_sort=-last_modified";
-        sinon.assert.calledWithMatch(
-          executeStub,
-          { path: `${path}?${expectedQS}`, headers: {} },
+        expect(executeStub).toHaveBeenCalledWith(
+          { path: `${path}?${expectedQS}`, headers: {}, method: undefined },
           //@ts-ignore Limitation of the Parameters type for overloaded functions
-          { raw: true }
+          { raw: true, retry: 0 }
         );
       });
     });
 
     describe("Pagination", () => {
-      let headersgetSpy: sinon.SinonStub;
-      let executeStub: Stub<typeof api.execute>;
+      let headersgetSpy: Mock;
+      let executeStub: Mock;
 
       it("should issue a request with the specified limit applied", () => {
-        headersgetSpy = sandbox.stub().returns("");
-        executeStub = sandbox.stub(api, "execute").returns(
+        headersgetSpy = vitest.fn().mockReturnValue("");
+        executeStub = vitest.spyOn(api, "execute").mockReturnValue(
           Promise.resolve({
             json: { data: [] },
             headers: { get: headersgetSpy },
@@ -877,24 +868,23 @@ describe("KintoClient", () => {
         api.paginatedList(path, { limit: 2 });
 
         const expectedQS = "_sort=-last_modified&_limit=2";
-        sinon.assert.calledWithMatch(
-          executeStub,
-          { path: `${path}?${expectedQS}`, headers: {} },
+        expect(executeStub).toHaveBeenCalledWith(
+          { path: `${path}?${expectedQS}`, headers: {}, method: undefined },
           //@ts-ignore Limitation of the Parameters type for overloaded functions
-          { raw: true }
+          { raw: true, retry: 0 }
         );
       });
 
       it("should query for next page", async () => {
         const { http } = api;
-        headersgetSpy = sandbox.stub().returns("http://next-page/");
-        sandbox.stub(api, "execute").returns(
+        headersgetSpy = vitest.fn().mockReturnValue("http://next-page/");
+        vitest.spyOn(api, "execute").mockReturnValue(
           Promise.resolve({
             json: { data: [] },
             headers: { get: headersgetSpy },
           })
         );
-        const requestStub = sandbox.stub(http, "request").returns(
+        const requestStub = vitest.spyOn(http, "request").mockReturnValue(
           Promise.resolve({
             status: 200,
             headers: new Headers(),
@@ -903,16 +893,17 @@ describe("KintoClient", () => {
         );
 
         await api.paginatedList(path, { limit: 2, pages: 2 });
-        sinon.assert.calledWith(requestStub, "http://next-page/");
+        expect(requestStub).toHaveBeenCalledWith("http://next-page/", {
+          headers: undefined,
+        });
       });
 
       it("should aggregate paginated results", async () => {
         const { http } = api;
-        sandbox
-          .stub(http, "request")
+        vitest
+          .spyOn(http, "request")
           // first page
-          .onFirstCall()
-          .returns(
+          .mockReturnValueOnce(
             Promise.resolve({
               status: 200,
               headers: new Headers({ "Next-Page": "http://next-page/" }),
@@ -920,8 +911,7 @@ describe("KintoClient", () => {
             })
           )
           // second page
-          .onSecondCall()
-          .returns(
+          .mockReturnValueOnce(
             Promise.resolve({
               status: 200,
               headers: new Headers(),
@@ -929,18 +919,17 @@ describe("KintoClient", () => {
             })
           );
 
-        (await api.paginatedList(path, { limit: 2, pages: 2 })).should.have
-          .property("data")
-          .eql([1, 2, 3]);
+        expect(
+          await api.paginatedList(path, { limit: 2, pages: 2 })
+        ).toHaveProperty("data", [1, 2, 3]);
       });
 
       it("should resolve with the hasNextPage being set to true", async () => {
         const { http } = api;
-        sandbox
-          .stub(http, "request")
+        vitest
+          .spyOn(http, "request")
           // first page
-          .onFirstCall()
-          .returns(
+          .mockReturnValueOnce(
             Promise.resolve({
               status: 200,
               headers: new Headers({ "Next-Page": "http://next-page/" }),
@@ -948,9 +937,10 @@ describe("KintoClient", () => {
             })
           );
 
-        (await api.paginatedList(path)).should.have
-          .property("hasNextPage")
-          .eql(true);
+        expect(await api.paginatedList(path)).toHaveProperty(
+          "hasNextPage",
+          true
+        );
       });
     });
 
@@ -979,7 +969,7 @@ describe("KintoClient", () => {
       hasNextPage: false,
       totalRecords: 2,
     };
-    let executeStub: Stub<typeof api.execute>;
+    let executeStub: Mock;
 
     describe("Capability available", () => {
       beforeEach(() => {
@@ -997,35 +987,49 @@ describe("KintoClient", () => {
             },
           },
         };
-        executeStub = sandbox
-          .stub(api, "execute")
-          .returns(
+        executeStub = vitest
+          .spyOn(api, "execute")
+          .mockReturnValue(
             Promise.resolve({ json: { data: [] }, headers: { get: () => "" } })
           );
       });
 
       it("should execute expected request", async () => {
         await api.listPermissions();
-        sinon.assert.calledWithMatch(executeStub, {
-          path: "/permissions?_sort=id",
-          headers: {},
-        });
+        expect(executeStub).toHaveBeenLastCalledWith(
+          {
+            path: "/permissions?_sort=id",
+            method: undefined,
+            headers: {},
+          },
+          {
+            raw: true,
+            retry: 0,
+          }
+        );
       });
 
       it("should support passing custom headers", async () => {
         api["_headers"] = { Foo: "Bar" };
         await api.listPermissions({ headers: { Baz: "Qux" } });
-        sinon.assert.calledWithMatch(executeStub, {
-          path: "/permissions?_sort=id",
-          headers: { Foo: "Bar", Baz: "Qux" },
-        });
+        expect(executeStub).toHaveBeenLastCalledWith(
+          {
+            path: "/permissions?_sort=id",
+            method: undefined,
+            headers: { Foo: "Bar", Baz: "Qux" },
+          },
+          {
+            raw: true,
+            retry: 0,
+          }
+        );
       });
 
       it("should resolve with a result object", async () => {
-        sandbox.stub(api, "paginatedList").returns(Promise.resolve(data));
-        (await api.listPermissions()).should.have
-          .property("data")
-          .eql(data.data);
+        vitest
+          .spyOn(api, "paginatedList")
+          .mockReturnValue(Promise.resolve(data));
+        expect(await api.listPermissions()).toHaveProperty("data", data.data);
       });
     });
 
@@ -1064,19 +1068,18 @@ describe("KintoClient", () => {
       hasNextPage: false,
       totalRecords: 2,
     };
-    let paginatedListStub: Stub<typeof api.paginatedList>;
+    let paginatedListStub: Mock;
 
     beforeEach(() => {
-      paginatedListStub = sandbox
-        .stub(api, "paginatedList")
-        .returns(Promise.resolve(data));
+      paginatedListStub = vitest
+        .spyOn(api, "paginatedList")
+        .mockReturnValue(Promise.resolve(data));
     });
 
     it("should execute expected request", () => {
       api.listBuckets({ since: "42" });
 
-      sinon.assert.calledWithMatch(
-        paginatedListStub,
+      expect(paginatedListStub).toHaveBeenCalledWith(
         "/buckets",
         { since: "42" },
         { headers: {}, retry: 0 }
@@ -1087,41 +1090,52 @@ describe("KintoClient", () => {
       api["_headers"] = { Foo: "Bar" };
       api.listBuckets({ headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        paginatedListStub,
+      expect(paginatedListStub).toHaveBeenCalledWith(
         "/buckets",
-        {},
-        { headers: { Foo: "Bar", Baz: "Qux" } }
+        {
+          headers: {
+            Baz: "Qux",
+          },
+        },
+        { headers: { Foo: "Bar", Baz: "Qux" }, retry: 0 }
       );
     });
 
     it("should resolve with a result object", async () => {
-      (await api.listBuckets()).should.have.property("data").eql(data.data);
+      expect(await api.listBuckets()).toHaveProperty("data", data.data);
     });
 
     it("should support filters and fields", () => {
       api.listBuckets({ filters: { a: "b" }, fields: ["c", "d"] });
 
-      sinon.assert.calledWithMatch(paginatedListStub, "/buckets", {
-        filters: { a: "b" },
-        fields: ["c", "d"],
-      });
+      expect(paginatedListStub).toHaveBeenCalledWith(
+        "/buckets",
+        {
+          filters: { a: "b" },
+          fields: ["c", "d"],
+        },
+        {
+          headers: {},
+          retry: 0,
+        }
+      );
     });
   });
 
   /** @test {KintoClient#createBucket} */
   describe("#createBucket", () => {
-    let executeStub: Stub<typeof api.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox.stub(api, "execute").returns(Promise.resolve());
+      executeStub = vitest
+        .spyOn(api, "execute")
+        .mockReturnValue(Promise.resolve());
     });
 
     it("should execute expected request", () => {
       api.createBucket("foo");
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/foo",
@@ -1138,14 +1152,13 @@ describe("KintoClient", () => {
     it("should accept a data option", () => {
       api.createBucket("foo", { data: { a: 1 } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/foo",
           headers: {},
           body: {
-            data: { a: 1 },
+            data: { a: 1, id: "foo" },
             permissions: undefined,
           },
         },
@@ -1156,8 +1169,7 @@ describe("KintoClient", () => {
     it("should accept a safe option", () => {
       api.createBucket("foo", { safe: true });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/foo",
@@ -1176,8 +1188,7 @@ describe("KintoClient", () => {
 
       api.createBucket("foo", { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "PUT",
           path: "/buckets/foo",
@@ -1194,17 +1205,18 @@ describe("KintoClient", () => {
 
   /** @test {KintoClient#deleteBucket} */
   describe("#deleteBucket()", () => {
-    let executeStub: Stub<typeof api.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
-      executeStub = sandbox.stub(api, "execute").returns(Promise.resolve());
+      executeStub = vitest
+        .spyOn(api, "execute")
+        .mockReturnValue(Promise.resolve());
     });
 
     it("should execute expected request", () => {
       api.deleteBucket("plop");
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/plop",
@@ -1217,8 +1229,7 @@ describe("KintoClient", () => {
     it("should accept a bucket object", () => {
       api.deleteBucket({ id: "plop" });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/plop",
@@ -1238,8 +1249,7 @@ describe("KintoClient", () => {
     it("should rely on the provided last_modified for the safe option", () => {
       api.deleteBucket("plop", { last_modified: 42, safe: true });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/plop",
@@ -1256,8 +1266,7 @@ describe("KintoClient", () => {
 
       api.deleteBucket("plop", { headers: { Baz: "Qux" } });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets/plop",
@@ -1273,7 +1282,7 @@ describe("KintoClient", () => {
 
   /** @test {KintoClient#deleteBuckets} */
   describe("#deleteBuckets()", () => {
-    let executeStub: Stub<typeof api.execute>;
+    let executeStub: Mock;
 
     beforeEach(() => {
       api.serverInfo = {
@@ -1285,20 +1294,21 @@ describe("KintoClient", () => {
         settings: { readonly: false, batch_max_requests: 25 },
         capabilities: {},
       };
-      executeStub = sandbox.stub(api, "execute").returns(Promise.resolve({}));
+      executeStub = vitest
+        .spyOn(api, "execute")
+        .mockReturnValue(Promise.resolve({}));
     });
 
     it("should execute expected request", async () => {
       await api.deleteBuckets();
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets?_sort=-last_modified",
           headers: {},
         },
-        { retry: 0 }
+        { raw: true, retry: 0 }
       );
     });
 
@@ -1312,8 +1322,7 @@ describe("KintoClient", () => {
     it("should rely on the provided last_modified for the safe option", async () => {
       await api.deleteBuckets({ last_modified: 42, safe: true });
 
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets?_sort=-last_modified",
@@ -1321,7 +1330,7 @@ describe("KintoClient", () => {
             "If-Match": `"42"`,
           },
         },
-        { retry: 0 }
+        { raw: true, retry: 0 }
       );
     });
 
@@ -1329,8 +1338,7 @@ describe("KintoClient", () => {
       api["_headers"] = { Foo: "Bar" };
 
       await api.deleteBuckets({ headers: { Baz: "Qux" } });
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets?_sort=-last_modified",
@@ -1339,20 +1347,19 @@ describe("KintoClient", () => {
             Baz: "Qux",
           },
         },
-        { retry: 0 }
+        { raw: true, retry: 0 }
       );
     });
 
     it("should accept a timestamp option", async () => {
       await api.deleteBuckets({ filters: { since: 42 } });
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets?since=42&_sort=-last_modified",
           headers: {},
         },
-        { retry: 0 }
+        { raw: true, retry: 0 }
       );
     });
 
@@ -1361,14 +1368,13 @@ describe("KintoClient", () => {
         filters: { a: "b" },
         fields: ["c", "d"],
       });
-      sinon.assert.calledWithMatch(
-        executeStub,
+      expect(executeStub).toHaveBeenCalledWith(
         {
           method: "DELETE",
           path: "/buckets?a=b&_sort=-last_modified&_fields=c,d",
           headers: {},
         },
-        { retry: 0 }
+        { raw: true, retry: 0 }
       );
     });
 

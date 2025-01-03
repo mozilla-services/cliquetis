@@ -69,7 +69,8 @@ const browserTestBuild = {
       format: "iife",
       sourcemap: true,
       globals: {
-        intern: "intern",
+        vite: "vite"
+        // intern: "intern",
       },
     },
   ],
